@@ -138,6 +138,8 @@ class MainWindow(QMainWindow):
         common_layout = QFormLayout(common_group)
         self.widgets['api_settings']['base_cache_dir'] = QLineEdit()
         common_layout.addRow("Cache Directory:", self.widgets['api_settings']['base_cache_dir'])
+        self.widgets['api_settings']['base_scratchpad_dir'] = QLineEdit()
+        common_layout.addRow("Scratchpad Directory:", self.widgets['api_settings']['base_scratchpad_dir'])
         self.widgets['api_settings']['default_max_retries'] = QSpinBox()
         common_layout.addRow("Default Max Retries:", self.widgets['api_settings']['default_max_retries'])
         self.widgets['api_settings']['default_retry_delay_seconds'] = QSpinBox()
@@ -274,6 +276,7 @@ class MainWindow(QMainWindow):
                     else: widget.setValue(value)
 
         self.widgets['api_settings']['base_cache_dir'].setText(api_settings.get('base_cache_dir', 'api_cache'))
+        self.widgets['api_settings']['base_scratchpad_dir'].setText(api_settings.get('base_scratchpad_dir', 'scratchpad'))
         self.widgets['api_settings']['default_max_retries'].setValue(api_settings.get('default_max_retries', 10))
         self.widgets['api_settings']['default_retry_delay_seconds'].setValue(api_settings.get('default_retry_delay_seconds', 30))
 
@@ -325,6 +328,7 @@ class MainWindow(QMainWindow):
                     api_settings[provider][key] = widget.value()
 
         api_settings['base_cache_dir'] = self.widgets['api_settings']['base_cache_dir'].text()
+        api_settings['base_scratchpad_dir'] = self.widgets['api_settings']['base_scratchpad_dir'].text()
         api_settings['default_max_retries'] = self.widgets['api_settings']['default_max_retries'].value()
         api_settings['default_retry_delay_seconds'] = self.widgets['api_settings']['default_retry_delay_seconds'].value()
 

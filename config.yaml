@@ -4,7 +4,6 @@ generation_params:
   author_gender: male
   main_topic: 'An action thriller on the counterintelligence operations against the
     Reptilian operatives embedded in the British government
-
     '
   is_fiction: true
   fiction_chapter_count: 50
@@ -12,8 +11,7 @@ generation_params:
   generate_acknowledgements: true
   generate_appendix: true
   include_about_author_in_main_book: true
-  setting: 'Contemporary real world
-
+  setting: 'Contemporary world
     '
   num_chapter_fallback: 3
   num_sections_per_chapter_fallback: 2
@@ -28,14 +26,15 @@ api_settings:
   default_max_retries: 10
   default_retry_delay_seconds: 30
   base_cache_dir: api_cache
+  base_scratchpad_dir: scratchpad
   llama_cpp:
     base_url: http://localhost:11434
     max_retries: 20
     retry_delay_seconds: 1
     request_timeout_seconds: 180
     # Model and generation parameters (configured directly in llama.cpp)
-    # model: gemma4:26B
-    # tokenizer_model: google/gemma-4-e2b-it
+    model: gemma4:26B
+    tokenizer_model: google/gemma-4-e2b-it
     # temperature: 0.8
     # context_window_size: 4096
     # disable_reasoning: false

@@ -31,10 +31,28 @@ from book_generator.common_generator import (
 from book_generator.fiction_generator import (
     generate_overall_story,
     generate_fiction_chapter_outline,
+    generate_fiction_chapter_pass1,
+    generate_fiction_chapter_pass2,
     generate_fiction_chapter_content,
     summarize_fiction_chapter,
     generate_location_list,
     update_location_list,
+)
+from book_generator.scratchpad import (
+    get_scratchpad_dir,
+    has_initialized_scratchpad,
+    init_scratchpad,
+    load_characters_from_scratchpad,
+    load_locations_from_scratchpad,
+    load_character_summary_text,
+    load_location_summary_text,
+    detect_relevant_entities,
+    load_specific_character_notes,
+    load_specific_location_notes,
+    save_chapter_pass,
+    save_chapter_summary,
+    load_chapter_from_scratchpad,
+    update_scratchpad_entities,
 )
 from book_generator.non_fiction_generator import (
     generate_chapter_outline,
@@ -53,6 +71,9 @@ def run_generation_process_fiction(config, output_base_dir, equation_image_dir):
     book_title = generation_params.get("book_title")
     writing_tone = generation_params.get("writing_tone")
 
+    scratchpad_dir = get_scratchpad_dir(config)
+    logging.info(f"Using scratchpad directory: {scratchpad_dir}")
+
     # 1. Create an overall story based on the prompt.
     logging.info("--- Generating Overall Story ---")
     overall_story = generate_overall_story(config, writing_tone=writing_tone)
@@ -60,21 +81,31 @@ def run_generation_process_fiction(config, output_base_dir, equation_image_dir):
         logging.critical("Fatal: Failed to generate the overall story. Exiting.")
         sys.exit(1)
 
-    # 2. Create a list of characters.
-    logging.info("--- Generating Character List ---")
-    character_list = generate_character_list(
-        config, book_title, overall_story=overall_story
-    )
+    # 2 & 3. Create or load characters and locations from scratchpad
+    if has_initialized_scratchpad(scratchpad_dir):
+        logging.info("--- Reusing existing character and location notes from scratchpad ---")
+        character_list = load_characters_from_scratchpad(scratchpad_dir)
+        location_list = load_locations_from_scratchpad(scratchpad_dir)
+        generation_params["character_list"] = character_list
+    else:
+        # 2. Create a list of characters.
+        logging.info("--- Generating Character List ---")
+        character_list = generate_character_list(
+            config, book_title, overall_story=overall_story
+        )
 
-    # 3. Create a list of locations.
-    logging.info("--- Generating Location List ---")
-    location_list = generate_location_list(config, overall_story)
+        # 3. Create a list of locations.
+        logging.info("--- Generating Location List ---")
+        location_list = generate_location_list(config, overall_story)
+
+        # Initialize scratchpad folders, summary.md files, and individual markdown notes
+        init_scratchpad(scratchpad_dir, character_list, location_list)
 
     # 4. Break down the story into chapters.
     logging.info("--- Generating Fiction Chapter Outline (Titles and Summaries) ---")
     fiction_chapter_count = generation_params.get("fiction_chapter_count", 20)
-    character_context_for_prompts = format_character_list_for_prompt(character_list)
-    location_context_for_prompts = format_location_list_for_prompt(location_list)
+    character_context_for_prompts = load_character_summary_text(scratchpad_dir) or format_character_list_for_prompt(character_list)
+    location_context_for_prompts = load_location_summary_text(scratchpad_dir) or format_location_list_for_prompt(location_list)
     chapters = generate_fiction_chapter_outline(
         config,
         overall_story,
@@ -87,72 +118,119 @@ def run_generation_process_fiction(config, output_base_dir, equation_image_dir):
         logging.critical("Fatal: Failed to generate chapter outline. Exiting.")
         sys.exit(1)
 
-    # 4. Write each chapter.
-    logging.info("--- Generating Fiction Chapter Content ---")
+    # 5. Write each chapter (two-pass process using scratchpad notes).
+    logging.info("--- Generating Fiction Chapter Content (Two-Pass Scratchpad) ---")
     body_matter = {}
     previous_chapters_summaries = []
 
     for i, chapter in enumerate(chapters):
         chapter_title = chapter.get("title")
         chapter_summary = chapter.get("summary")
-        logging.info(f"--- Generating Content for Chapter {i+1}: {chapter_title} ---")
+        chapter_num = i + 1
+        logging.info(f"--- Processing Chapter {chapter_num}: '{chapter_title}' ---")
+
+        # Interruption check: reuse completed chapter from scratchpad if available
+        cached_chapter = load_chapter_from_scratchpad(scratchpad_dir, chapter_num)
+        if cached_chapter:
+            logging.info(
+                f"Chapter {chapter_num} ('{chapter_title}') already completed in scratchpad. Reusing content."
+            )
+            final_content = cached_chapter["content"]
+            body_matter[chapter_title] = [{"title": "", "content": final_content}]
+            summary_to_record = cached_chapter.get("summary") or chapter_summary
+            if summary_to_record:
+                chapter["summary"] = summary_to_record
+            if chapter_title and summary_to_record:
+                previous_chapters_summaries.append(
+                    f"Chapter {chapter_num} ('{chapter_title}'): {summary_to_record.strip()}"
+                )
+            continue
 
         previous_chapters_summary_str = "\n".join(previous_chapters_summaries)
         if not previous_chapters_summary_str:
             previous_chapters_summary_str = "This is the first chapter."
 
-        character_context_for_prompts = format_character_list_for_prompt(
-            character_list
-        )
-        location_context_for_prompts = format_location_list_for_prompt(location_list)
-        chapter_content = generate_fiction_chapter_content(
+        # Pass 1: Generate chapter draft using short summary of characters and locations
+        char_summary_str = load_character_summary_text(scratchpad_dir)
+        loc_summary_str = load_location_summary_text(scratchpad_dir)
+
+        pass1_content = generate_fiction_chapter_pass1(
             config,
             previous_chapters_summary_str,
             chapter_title,
             chapter_summary,
-            character_context_for_prompts,
-            location_context_for_prompts,
-            writing_tone,
+            character_summary=char_summary_str,
+            location_summary=loc_summary_str,
+            writing_tone=writing_tone,
+            chapter_num=chapter_num,
+        )
+        save_chapter_pass(scratchpad_dir, chapter_num, chapter_title, pass_number=1, content=pass1_content)
+
+        # Pass 2: Regenerate without character/location summaries, but with specific notes from scratchpad
+        detected_chars, detected_locs = detect_relevant_entities(
+            scratchpad_dir, chapter_title, chapter_summary, pass1_content
+        )
+        logging.info(
+            f"Chapter {chapter_num} active entities: {len(detected_chars)} characters ({', '.join(detected_chars) or 'None'}), "
+            f"{len(detected_locs)} locations ({', '.join(detected_locs) or 'None'})."
+        )
+        char_notes_str = load_specific_character_notes(scratchpad_dir, detected_chars)
+        loc_notes_str = load_specific_location_notes(scratchpad_dir, detected_locs)
+
+        pass2_content = generate_fiction_chapter_pass2(
+            config,
+            previous_chapters_summary_str,
+            chapter_title,
+            chapter_summary,
+            pass1_draft=pass1_content,
+            character_notes=char_notes_str,
+            location_notes=loc_notes_str,
+            writing_tone=writing_tone,
+            chapter_num=chapter_num,
         )
 
-        body_matter[chapter_title] = [{"title": "", "content": chapter_content}]
+        final_content = (
+            pass2_content
+            if pass2_content and "Content generation failed" not in pass2_content
+            else pass1_content
+        )
+        save_chapter_pass(scratchpad_dir, chapter_num, chapter_title, pass_number=2, content=final_content)
+        body_matter[chapter_title] = [{"title": "", "content": final_content}]
 
-        # --- Summarize the generated content ---
-        if chapter_content and "Content generation failed" not in chapter_content:
+        # Summarize the final generated content
+        if final_content and "Content generation failed" not in final_content:
             new_summary = summarize_fiction_chapter(
-                config, chapter_title, chapter_content, writing_tone
+                config, chapter_title, final_content, writing_tone
             )
             if new_summary:
                 logging.info(
                     f"Successfully summarized chapter '{chapter_title}' based on its content."
                 )
-                # Replace the original summary with the new, more accurate one
                 chapter_summary = new_summary
             else:
                 logging.warning(
-                    f"Failed to generate a new summary for chapter '{chapter_title}'. Falling back to the original summary."
+                    f"Failed to generate a new summary for chapter '{chapter_title}'. Falling back to original summary."
                 )
-            # --- Update Character List ---
-            logging.info(f"--- Updating Character List after Chapter {i+1} ---")
-            character_list = update_character_list(
-                config, character_list, chapter_content
+            chapter["summary"] = chapter_summary
+            save_chapter_summary(scratchpad_dir, chapter_num, chapter_title, chapter_summary)
+
+            # Update scratchpad character and location notes based on final chapter content
+            logging.info(f"--- Updating Scratchpad Entities after Chapter {chapter_num} ---")
+            update_scratchpad_entities(
+                config,
+                scratchpad_dir,
+                chapter_title,
+                final_content,
+                chapter_num=chapter_num,
             )
-            # --- End Character List Update ---
-            # --- Update Location List ---
-            logging.info(f"--- Updating Location List after Chapter {i+1} ---")
-            location_list = update_location_list(
-                config, location_list, chapter_content
-            )
-            # --- End Location List Update ---
         else:
             logging.warning(
-                f"Skipping summary generation for chapter '{chapter_title}' due to content generation failure."
+                f"Skipping summary generation and scratchpad updates for chapter '{chapter_title}' due to content generation failure."
             )
-        # --- End summarization ---
 
         if chapter_title and chapter_summary:
             summary_entry = (
-                f"Chapter {i + 1} ('{chapter_title}'): {chapter_summary.strip()}"
+                f"Chapter {chapter_num} ('{chapter_title}'): {chapter_summary.strip()}"
             )
             previous_chapters_summaries.append(summary_entry)
 
@@ -577,6 +655,20 @@ def run_generation_process():
         topic_specific_cache_dir
     )
     topic_specific_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    base_scratchpad_dir_from_config = (
+        api_settings.get("base_scratchpad_dir")
+        or config.get("base_scratchpad_dir")
+        or config.get("scratchpad_dir")
+        or "scratchpad"
+    )
+    topic_specific_scratchpad_dir = (
+        pathlib.Path(base_scratchpad_dir_from_config) / sanitized_model_name / topic_dir_name
+    )
+    topic_specific_scratchpad_dir.mkdir(parents=True, exist_ok=True)
+    logging.info(f"Topic-specific scratchpad directory set to: {topic_specific_scratchpad_dir}")
+    config["scratchpad_dir"] = str(topic_specific_scratchpad_dir)
+    config["scratchpad_dir_resolved"] = topic_specific_scratchpad_dir
 
     equation_image_dir = topic_specific_cache_dir / "equation_images"
     equation_image_dir.mkdir(parents=True, exist_ok=True)

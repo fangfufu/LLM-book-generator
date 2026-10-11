@@ -92,20 +92,26 @@ Output in British English.
         return None
 
 
-def generate_fiction_chapter_content(
+def generate_fiction_chapter_pass1(
     config,
     previous_chapters_summary,
     chapter_title,
     chapter_summary,
-    character_context="",
-    location_context="",
+    character_summary="",
+    location_summary="",
     writing_tone="",
+    chapter_num=1,
 ):
-    """Generates the content for a single fiction chapter."""
-    logging.info(f"Generating content for fiction chapter: '{chapter_title}'...")
+    """
+    Pass 1: Generates the initial draft of a fiction chapter using short summaries
+    of characters and locations.
+    """
+    logging.info(
+        f"Generating Pass 1 (Draft) for Chapter {chapter_num}: '{chapter_title}'..."
+    )
 
     prompt = f"""
-You are a fiction writer. Your task is to write a single chapter of a book.
+You are a fiction writer. Your task is to write the first draft of a single chapter of a book.
 
 Here is the context for your writing:
 
@@ -118,13 +124,17 @@ Title: {chapter_title}
 Summary: {chapter_summary}
 --- End Current Chapter ---
 
-{character_context}
+--- Characters Overview ---
+{character_summary}
+--- End Characters Overview ---
 
-{location_context}
+--- Locations Overview ---
+{location_summary}
+--- End Locations Overview ---
 
 Writing Tone: {writing_tone}
 
-Based on all the context provided, write the full content of the current chapter.
+Based on all the context provided, write the full content of the current chapter draft.
 
 Instructions:
 - The chapter must logically and narratively continue from the previous chapter.
@@ -135,13 +145,100 @@ Instructions:
 - Format the output using standard Markdown (paragraphs, lists, bold, italics).
 - Write the entire output in British English.
 """
-    cache_prefix = f"fiction_content_{sanitize_filename(chapter_title, max_length=40)}"
+    cache_prefix = f"fiction_pass1_ch{chapter_num:02d}_{sanitize_filename(chapter_title, max_length=30)}"
     content = call_llm_api(prompt, config, cache_prefix=cache_prefix)
 
     return (
         content
         if content
-        else f"**Content generation failed for Chapter '{chapter_title}'.**"
+        else f"**Content generation failed for Chapter '{chapter_title}' (Pass 1).**"
+    )
+
+
+def generate_fiction_chapter_pass2(
+    config,
+    previous_chapters_summary,
+    chapter_title,
+    chapter_summary,
+    pass1_draft,
+    character_notes="",
+    location_notes="",
+    writing_tone="",
+    chapter_num=1,
+):
+    """
+    Pass 2: Regenerates and enriches the chapter WITHOUT the broad character/location summaries,
+    using the specific character and location notes from the scratchpad and Pass 1's draft.
+    """
+    logging.info(
+        f"Generating Pass 2 (Enriched with Specific Notes) for Chapter {chapter_num}: '{chapter_title}'..."
+    )
+
+    prompt = f"""
+You are a fiction writer. Your task is to rewrite, refine, and deepen a chapter of a book based on detailed character and location notes.
+
+Here is the context for your writing:
+
+--- Summary of Previous Chapters ---
+{previous_chapters_summary}
+--- End Summary of Previous Chapters ---
+
+--- Current Chapter ---
+Title: {chapter_title}
+Summary: {chapter_summary}
+--- End Current Chapter ---
+
+--- First Draft ---
+{pass1_draft}
+--- End First Draft ---
+
+{character_notes}
+
+{location_notes}
+
+Writing Tone: {writing_tone}
+
+Instructions:
+- Rewrite and expand the chapter content using the detailed character and location notes provided above.
+- Ensure characters behave consistently with their specific personalities, backgrounds, voice, and motivations described in their notes.
+- Ensure locations and environments are vividly depicted with the specific details and atmosphere from their notes.
+- Seamlessly integrate plot events from the first draft while deepening narrative depth, dialogue, sensory details, and emotional resonance.
+- Avoid repeating the structure and content of the previous chapter.
+- Write about 2000 words.
+- Output *only* the text content for this chapter.
+- Do *not* include the main chapter title in the output itself. Start directly with the chapter's content.
+- Format the output using standard Markdown (paragraphs, lists, bold, italics).
+- Write the entire output in British English.
+"""
+    cache_prefix = f"fiction_pass2_ch{chapter_num:02d}_{sanitize_filename(chapter_title, max_length=30)}"
+    content = call_llm_api(prompt, config, cache_prefix=cache_prefix)
+
+    return (
+        content
+        if content
+        else f"**Content generation failed for Chapter '{chapter_title}' (Pass 2).**"
+    )
+
+
+def generate_fiction_chapter_content(
+    config,
+    previous_chapters_summary,
+    chapter_title,
+    chapter_summary,
+    character_context="",
+    location_context="",
+    writing_tone="",
+):
+    """Generates the content for a single fiction chapter (backward-compatible)."""
+    return generate_fiction_chapter_pass1(
+        config=config,
+        previous_chapters_summary=previous_chapters_summary,
+        chapter_title=chapter_title,
+        chapter_summary=chapter_summary,
+        character_summary=character_context,
+        location_summary=location_context,
+        writing_tone=writing_tone,
+        chapter_num=1,
     )
 
 

@@ -6,6 +6,7 @@ The behavior of AI Book Weaver is primarily controlled by the `config.yaml` file
     *   `provider`: Set to `"llama_cpp"`.
     *   `llama_cpp`:
         *   `base_url`: E.g., `"http://localhost:8080"`.
+        *   `endpoint`: (Optional) API endpoint path. Defaults to `/v1/chat/completions` (recommended for chat and instruction-tuned models with chat templates). Can be set to `/completion` for raw completion.
         *   `model`: E.g., `"llama-3"`.
         *   `temperature`: Controls randomness (e.g., `0.8`).
         *   `tokenizer_model`: (Optional) For client-side token counting if server `/tokenize` is not used, e.g., `"NousResearch/Meta-Llama-3-8B-Instruct"`.
@@ -15,6 +16,7 @@ The behavior of AI Book Weaver is primarily controlled by the `config.yaml` file
         *   `max_retries`, `retry_delay_seconds`: For API call resilience.
         *   `request_timeout_seconds`: Timeout for API requests in seconds.
     *   `base_cache_dir`: Path for API call caching (default: `"api_cache"`).
+    *   `base_scratchpad_dir`: Path for scratchpad storing characters, locations, and two-pass drafts (default: `"scratchpad"`).
     *   `default_max_retries`, `default_retry_delay_seconds`: Global retry defaults.
 
 *   **`generation_params`**: Controls the content and structure of the book.
@@ -59,6 +61,7 @@ The behavior of AI Book Weaver is primarily controlled by the `config.yaml` file
         temperature: 0.8
         context_window_size: 4096
       base_cache_dir: "api_cache" # Cache stored here
+      base_scratchpad_dir: "scratchpad" # Scratchpad stored here
 
     generation_params:
       # main_topic: "The Secret Life of Urban Foxes" # Leave empty to auto-generate
