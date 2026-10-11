@@ -1,0 +1,101 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = [
+  "hatchling",
+]
+
+[project]
+name = "llm-book-generator"
+version = "0.1.0"
+description = "Automated book generation from outline to formatted DOCX manuscript using LLMs"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "GPL-3.0-only"
+authors = [
+  { name = "Fufu Fang", email = "fangfufu@fangfufu.co.uk" },
+]
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+  "lxml==6.1.3",
+  "markdown==3.11",
+  "matplotlib==3.11.2",
+  "pillow==12.3.0",
+  "pymdown-extensions==12.2",
+  "pyside6==6.12.0",
+  "python-docx==1.2.0",
+  "python-dotenv==1.2.4",
+  "pyyaml==6.0.3",
+  "randomwords==0.4.0",
+  "requests==2.34.2",
+  "transformers==5.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "prek==0.5.5",
+  "pyright==1.1.414",
+  "pytest==9.1.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+  "book_generator",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "basic"
+include = [
+  "book_generator",
+  "gui.py",
+  "main.py",
+]
+exclude = [
+  "tests",
+]
+reportAttributeAccessIssue = "none"
+reportArgumentType = "none"
+reportCallIssue = "none"
+reportOptionalMemberAccess = "none"
+reportPossiblyUnboundVariable = "none"
+reportIncompatibleMethodOverride = "none"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.mypy]
+mypy_path = "."
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+  "book_generator.*",
+  "gui",
+  "main",
+  "tests.*",
+]
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+warn_return_any = false
+disallow_subclassing_any = false
+disallow_any_generics = false
+disable_error_code = ["var-annotated", "union-attr", "return-value"]
+
+[tool.vulture]
+paths = [
+  "book_generator",
+]
+min_confidence = 80
