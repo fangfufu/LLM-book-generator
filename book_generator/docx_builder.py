@@ -1793,13 +1793,11 @@ def assemble_marketing_docx(
     api_settings_local = config.get(
         "api_settings", {}
     )  # Use a local var to avoid conflict
-    api_provider_local = api_settings_local.get("provider", "gemini")
+    api_provider_local = api_settings_local.get("provider", "llama_cpp")
 
     model_name_used = ""
-    if api_provider_local == "gemini":
-        model_name_used = api_settings_local.get("gemini", {}).get("model", "")
-    elif api_provider_local == "ollama":
-        model_name_used = api_settings_local.get("ollama", {}).get("model", "")
+    if api_provider_local in ("llama_cpp", "llama.cpp"):
+        model_name_used = api_settings_local.get("llama_cpp", api_settings_local.get("llama.cpp", {})).get("model", "")
     else:
         model_name_used = "[Unknown API Provider or Model]"
         logging.error(

@@ -70,10 +70,7 @@ def _check_for_repetition(
     return False
 import sys
 import time
-import threading
-from collections import deque
 
-import google.generativeai as genai
 import requests
 from dotenv import load_dotenv
 from transformers import AutoTokenizer
@@ -83,17 +80,9 @@ from book_generator.constants import REPETITION_DETECTED
 
 
 def setup_environment():
-    """Loads environment variables from .env file and retrieves API key."""
+    """Loads environment variables from .env file."""
     load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        logging.error(
-            "Error: GEMINI_API_KEY not found in .env file or environment variables."
-        )
-        sys.exit(1)
-    genai.configure(api_key=api_key)
-    logging.info("Environment variables loaded and API key found.")
-    return api_key
+    logging.info("Environment variables loaded.")
 
 
 # --- Caching Mechanism ---
@@ -153,246 +142,9 @@ def save_to_cache(prompt_text, response_text, cache_dir, cache_prefix=None):
 
 # --- LLM API Interaction ---
 
-_GEMINI_CALL_TIMESTAMPS = deque()
-_GEMINI_RATE_LIMIT_LOCK = threading.Lock()
-
-
-def _enforce_gemini_rate_limit():
+def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
     """
-    Enforces a rate limit of less than 30 calls per minute for Gemini API.
-    """
-    global _GEMINI_CALL_TIMESTAMPS
-    # Limit to 29 calls per 60 seconds to be safe (less than 30)
-    MAX_CALLS = 29
-    TIME_WINDOW = 60.0
-
-    with _GEMINI_RATE_LIMIT_LOCK:
-        current_time = time.time()
-
-        # Remove timestamps older than TIME_WINDOW
-        while _GEMINI_CALL_TIMESTAMPS and _GEMINI_CALL_TIMESTAMPS[0] <= current_time - TIME_WINDOW:
-            _GEMINI_CALL_TIMESTAMPS.popleft()
-
-        if len(_GEMINI_CALL_TIMESTAMPS) >= MAX_CALLS:
-            # Calculate wait time based on the oldest timestamp in the current window
-            wait_time = _GEMINI_CALL_TIMESTAMPS[0] + TIME_WINDOW - current_time
-            if wait_time > 0:
-                logging.info(f"Gemini rate limit reached ({MAX_CALLS} calls/min). Sleeping for {wait_time:.2f} seconds.")
-                time.sleep(wait_time)
-                # Update current_time after sleep
-                current_time = time.time()
-
-                # Clean expired again after sleep
-                while _GEMINI_CALL_TIMESTAMPS and _GEMINI_CALL_TIMESTAMPS[0] <= current_time - TIME_WINDOW:
-                    _GEMINI_CALL_TIMESTAMPS.popleft()
-
-        _GEMINI_CALL_TIMESTAMPS.append(current_time)
-
-
-def _call_gemini_api_internal(prompt, config, cache_prefix=None):
-    """
-    Internal function to call the Gemini API.
-    Assumes caching is handled by the caller.
-
-    Args:
-        prompt (str): The prompt to send to the API.
-        config (dict): The application configuration.
-        cache_prefix (str, optional): A prefix to add to the cache filename
-                                      for better identification. Defaults to None.
-                                      (Note: cache_prefix is for logging/context here, actual caching is external)
-    Returns:
-        str or None: The API response text, or None if an error occurred.
-    """
-    api_settings_conf = config.get("api_settings", {})
-    gemini_conf = api_settings_conf.get("gemini", {})
-
-    default_max_retries = api_settings_conf.get("default_max_retries", 3)
-    default_retry_delay = api_settings_conf.get("default_retry_delay_seconds", 5)
-
-    # Logging for Gemini-specific call initiation (cache prefix is for context)
-    model_name = gemini_conf.get("model", "gemini-2.0-flash-latest")
-    temperature = float(
-        gemini_conf.get("temperature", 1.0)
-    )  # Default from example config.yaml
-
-    max_retries = int(gemini_conf.get("max_retries", default_max_retries))
-    retry_delay = int(gemini_conf.get("retry_delay_seconds", default_retry_delay))
-    # safety_settings would be fetched from gemini_conf if specified in config.yaml under api_settings.gemini
-    safety_settings = gemini_conf.get("safety_settings", None)
-
-    verbose_debug = config.get("debug_options", {}).get("verbose_debug", False)
-    stream_gemini = (
-        verbose_debug  # Specifically for Gemini streaming if verbose_debug is on
-    )
-
-    try:
-        if verbose_debug:
-            logging.info(f"Gemini API Prompt for model '{model_name}':\n{prompt}")
-            # For very long prompts, you might want to log only a portion or a summary
-            # logging.info(f"Gemini API Prompt for model '{model_name}' (first 500 chars):\n{prompt[:500]}...")
-
-        model = genai.GenerativeModel(model_name)
-        generation_config = {"temperature": temperature}
-
-        # Count tokens for Gemini prompt
-        try:
-            _enforce_gemini_rate_limit()
-            token_count_response = model.count_tokens(
-                contents=prompt
-            )
-            prompt_token_count = token_count_response.total_tokens
-            logging.info(
-                f"Gemini prompt token count for model '{model_name}': {prompt_token_count} tokens."
-            )
-        except Exception as e_token:
-            logging.error(
-                f"Could not count tokens for Gemini prompt (model '{model_name}'): {e_token}",
-                exc_info=True
-            )
-
-        for attempt in range(max_retries):
-            try:
-                _enforce_gemini_rate_limit()
-                if stream_gemini:
-                    response = model.generate_content(
-                        contents=prompt,
-                        generation_config=generation_config,
-                        stream=True
-                    )
-                else:
-                    response = model.generate_content(
-                        contents=prompt,
-                        generation_config=generation_config,
-                    )
-
-                if stream_gemini:
-                    logging.info(f"Streaming Gemini response for model '{model_name}':")
-                    full_response_text_parts = []
-                    repetition_check_config = config.get("repetition_check", {})
-                    print(f"\n--- Gemini Stream ({model_name}) ---")
-                    for chunk in response:
-                        if hasattr(chunk, "text"):
-                            response_part = chunk.text
-                            print(response_part, end="", flush=True)
-                            full_response_text_parts.append(response_part)
-
-                            if repetition_check_config.get("enabled", False):
-                                if _check_for_repetition(
-                                    response_part,
-                                    repetition_check_config,
-                                    full_response_text_parts,
-                                ):
-                                    logging.warning(
-                                        "Repetition detected. Terminating and retrying."
-                                    )
-                                    print(
-                                        "\n--- End Gemini Stream (Repetition Detected) ---"
-                                    )
-                                    return REPETITION_DETECTED
-                        elif (
-                            hasattr(chunk, "prompt_feedback")
-                            and chunk.prompt_feedback
-                            and chunk.prompt_feedback.block_reason
-                        ):
-                            logging.error(
-                                f"Gemini API stream blocked. Reason: {chunk.prompt_feedback.block_reason}"
-                            )
-                            print(f"\n--- End Gemini Stream (Blocked) ---")
-                            return None
-
-                    print(f"\n--- End Gemini Stream (Done) ---")
-                    logging.info(
-                        f"Gemini API stream completed for model '{model_name}'."
-                    )
-                    if full_response_text_parts:
-                        final_text = "".join(
-                            str(p) for p in full_response_text_parts
-                        ).strip()
-                        return final_text.replace("</end_of_turn>", "").replace("</start_of_turn>", "")
-                    return ""
-                else:  # Not streaming
-                    response_text = None  # Initialize
-
-                    # Handle prompt feedback first: if the prompt itself was blocked, don't retry.
-                    if (
-                        response.prompt_feedback
-                        and response.prompt_feedback.block_reason
-                    ):
-                        logging.error(
-                            f"Gemini API call blocked due to prompt. Reason: {response.prompt_feedback.block_reason}. Will not retry."
-                        )
-                        return None  # Explicitly do not retry prompt blocks
-
-                    # If prompt was not blocked, check for response parts
-                    if response.parts:
-                        response_text = response.text
-                    # Removed the elif for prompt_feedback.block_reason here as it's handled above.
-                    # The case below is for when there are no parts, and it wasn't a prompt block.
-                    # This could be due to finish_reason (e.g., SAFETY on response, MAX_TOKENS).
-                    else:
-                        # Check finish reason even if parts are empty
-                        finish_reason = "UNKNOWN"
-                        try:
-                            # Access finish_reason safely
-                            if response.candidates:
-                                finish_reason = response.candidates[
-                                    0
-                                ].finish_reason.name  # Use .name for enum
-                        except (AttributeError, IndexError):
-                            logging.error(
-                                "Could not determine finish reason from response."
-                            )
-
-                        logging.error(
-                            f"API call returned no content or parts (and was not prompt-blocked). Finish Reason: {finish_reason}. Will attempt retry if applicable."
-                        )
-                        # response_text remains None
-
-                    if response_text is not None:  # Check if we got valid text
-                        logging.info(
-                            f"Gemini API call successful for model {model_name}."
-                        )
-                        return response_text.replace("</end_of_turn>", "").replace("</start_of_turn>", "")
-                    else:
-                        logging.error(
-                            f"API attempt {attempt + 1} for model {model_name} resulted in no content (response_text is None). Will proceed to retry logic."
-                        )
-
-            except Exception as e:
-                logging.error(
-                    f"Gemini API call attempt {attempt + 1} for model {model_name} failed: {e}",
-                    exc_info=True,
-                )
-                if "quota" in str(e).lower():  # Basic check for quota issues
-                    logging.error(
-                        f"Gemini API quota likely exceeded: {e}. Retrying as per configuration..."
-                    )
-                    # Removed 'return None' to allow retry for quota issues
-                # For other general exceptions, the loop will continue to the retry logic.
-
-            if attempt < max_retries - 1:
-                logging.info(f"Retrying Gemini API call in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-
-        logging.error(
-            f"Gemini API call for model {model_name} failed after {max_retries} attempts."
-        )
-        if api_settings_conf.get("terminate_on_api_failure", False):
-            logging.critical("Terminating program due to repeated API failures.")
-            sys.exit(1)
-        return None  # Explicitly return None after all retries fail
-
-    except Exception as e:
-        logging.error(f"An unexpected error occurred during Gemini API call setup: {e}")
-        if api_settings_conf.get("terminate_on_api_failure", False):
-            logging.critical("Terminating program due to unexpected API error.")
-            sys.exit(1)
-        return None
-
-
-def _call_ollama_api_internal(prompt, config, cache_prefix=None):
-    """
-    Internal function to call the Ollama API.
+    Internal function to call the llama.cpp API.
     Assumes caching is handled by the caller.
 
     Args:
@@ -404,79 +156,92 @@ def _call_ollama_api_internal(prompt, config, cache_prefix=None):
         str or None: The API response text, or None if an error occurred.
     """
     api_settings_conf = config.get("api_settings", {})
-    ollama_config = api_settings_conf.get("ollama", {})
+    llama_cpp_config = api_settings_conf.get(
+        "llama_cpp", api_settings_conf.get("llama.cpp", {})
+    )
 
     default_max_retries = api_settings_conf.get("default_max_retries", 3)
     default_retry_delay = api_settings_conf.get("default_retry_delay_seconds", 5)
 
-    base_url = ollama_config.get("base_url", "http://localhost:11434")
-    model_name = ollama_config.get("model", "llama3")  # Default Ollama model
-    tokenizer_model_name = ollama_config.get(
-        "tokenizer_model", "NousResearch/Llama-3-8B-Instruct-hf"
-    )  # Default Llama3 tokenizer
+    base_url = llama_cpp_config.get("base_url", "http://localhost:8080")
+    model_name = llama_cpp_config.get("model", "llama-3")
+    tokenizer_model_name = llama_cpp_config.get("tokenizer_model", None)
 
-    max_retries = int(ollama_config.get("max_retries", default_max_retries))
-    retry_delay = int(ollama_config.get("retry_delay_seconds", default_retry_delay))
+    max_retries = int(llama_cpp_config.get("max_retries", default_max_retries))
+    retry_delay = int(llama_cpp_config.get("retry_delay_seconds", default_retry_delay))
     request_timeout = int(
-        ollama_config.get("request_timeout_seconds", 120)
-    )  # Default 2 mins
-    api_url = f"{base_url.rstrip('/')}/api/generate"
-
-    verbose_debug = config.get("debug_options", {}).get("verbose_debug", False)
-    stream_ollama = (
-        verbose_debug  # Specifically for Ollama streaming if verbose_debug is on
+        llama_cpp_config.get("request_timeout_seconds", 120)
     )
 
-    # Prepare payload, starting with basic info
+    endpoint = llama_cpp_config.get("endpoint")
+    if endpoint:
+        api_url = f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+    elif base_url.rstrip("/").endswith("/completion"):
+        api_url = base_url
+    else:
+        api_url = f"{base_url.rstrip('/')}/completion"
+
+    verbose_debug = config.get("debug_options", {}).get("verbose_debug", False)
+    stream_llama_cpp = verbose_debug
+
     payload = {
-        "model": model_name,
         "prompt": prompt,
-        "stream": stream_ollama,
-        "options": {},  # Initialize empty options
+        "stream": stream_llama_cpp,
     }
+    if model_name:
+        payload["model"] = model_name
 
     # Get all llm_options from the config
-    llm_options = ollama_config.get("llm_options", {})
+    llm_options = llama_cpp_config.get("llm_options", {})
     if llm_options:
-        logging.info(f"Applying Ollama llm_options: {llm_options}")
-        # Iterate through the provided llm_options and add them to the payload's options
+        logging.info(f"Applying llama.cpp llm_options: {llm_options}")
         for key, value in llm_options.items():
-            if value is not None:  # Ensure not to add keys with None value
-                payload["options"][key] = value
-                logging.debug(f"Set Ollama option '{key}': {value}")
+            if value is not None:
+                payload[key] = value
+                logging.debug(f"Set llama.cpp option '{key}': {value}")
 
-    # For backward compatibility, check for standalone temperature if not in llm_options
-    if "temperature" not in payload["options"] and "temperature" in ollama_config:
-        payload["options"]["temperature"] = float(ollama_config["temperature"])
-        logging.info(
-            f"Applying standalone 'temperature' setting: {payload['options']['temperature']}"
-        )
+    # Check for standalone temperature if not in llm_options
+    if "temperature" not in payload and "temperature" in llama_cpp_config:
+        payload["temperature"] = float(llama_cpp_config["temperature"])
 
-    # For backward compatibility, handle standalone context_window_size
-    if "num_ctx" not in payload["options"] and "context_window_size" in ollama_config:
-        context_window_size = ollama_config.get("context_window_size")
-        if context_window_size is not None:
+    # Handle standalone context_window_size / n_ctx
+    if "n_ctx" not in payload and "context_window_size" in llama_cpp_config:
+        context_window_size = llama_cpp_config.get("context_window_size")
+        if context_window_size:
             try:
-                payload["options"]["num_ctx"] = int(context_window_size)
-                logging.info(
-                    f"Applying standalone 'context_window_size' as num_ctx: {payload['options']['num_ctx']}"
-                )
+                payload["n_ctx"] = int(context_window_size)
             except (ValueError, TypeError):
                 logging.error(
                     f"Invalid 'context_window_size' value: {context_window_size}. It must be an integer. Ignoring."
                 )
 
     if verbose_debug:
-        logging.info(f"Ollama API Prompt for model '{model_name}':\n{prompt}")
-        # For very long prompts, you might want to log only a portion or a summary
-        # logging.info(f"Ollama API Prompt for model '{model_name}' (first 500 chars):\n{prompt[:500]}...")
+        logging.info(f"llama.cpp API Prompt for model '{model_name}':\n{prompt}")
 
-    # Attempt client-side token counting for Ollama
-    # Note: For higher efficiency with many calls, consider loading the tokenizer once outside this function.
-    if tokenizer_model_name:
+    # Attempt token counting: first via llama.cpp /tokenize endpoint, then fall back to AutoTokenizer
+    token_counted = False
+    try:
+        tokenize_url = f"{base_url.rstrip('/')}/tokenize"
+        tok_res = requests.post(
+            tokenize_url,
+            headers={"Content-Type": "application/json"},
+            json={"content": prompt},
+            timeout=5,
+        )
+        if tok_res.status_code == 200:
+            tok_data = tok_res.json()
+            tokens = tok_data.get("tokens", [])
+            logging.info(
+                f"llama.cpp server-side token count for prompt (model: '{model_name}'): {len(tokens)} tokens."
+            )
+            token_counted = True
+    except Exception as e_tok:
+        logging.debug(f"llama.cpp server-side tokenize request failed: {e_tok}")
+
+    if not token_counted and tokenizer_model_name:
         try:
             logging.debug(
-                f"Loading tokenizer: {tokenizer_model_name} for Ollama prompt token count."
+                f"Loading tokenizer: {tokenizer_model_name} for llama.cpp prompt token count."
             )
             hugging_face_token = os.getenv("HF_TOKEN")
             tokenizer = AutoTokenizer.from_pretrained(
@@ -485,20 +250,13 @@ def _call_ollama_api_internal(prompt, config, cache_prefix=None):
             token_ids = tokenizer.encode(prompt)
             num_tokens = len(token_ids)
             logging.info(
-                f"Ollama client-side token count for prompt (tokenizer: '{tokenizer_model_name}', model: '{model_name}'): {num_tokens} tokens."
+                f"llama.cpp client-side token count for prompt (tokenizer: '{tokenizer_model_name}', model: '{model_name}'): {num_tokens} tokens."
             )
-        except Exception as e_token_ollama:
+        except Exception as e_token_llamacpp:
             logging.error(
-                f"Could not count tokens for Ollama prompt using tokenizer '{tokenizer_model_name}' (model: '{model_name}'): {e_token_ollama}",
+                f"Could not count tokens for llama.cpp prompt using tokenizer '{tokenizer_model_name}' (model: '{model_name}'): {e_token_llamacpp}",
                 exc_info=True,
             )
-            logging.info(
-                f"Ollama API for model '{model_name}': Standard Ollama API does not provide a direct prompt token count. Client-side estimation failed."
-            )
-    else:
-        logging.info(
-            f"Ollama API for model '{model_name}': No tokenizer_model configured for client-side token counting. Standard Ollama API does not provide a direct prompt token count."
-        )
 
     for attempt in range(max_retries):
         try:
@@ -507,28 +265,51 @@ def _call_ollama_api_internal(prompt, config, cache_prefix=None):
                 headers={"Content-Type": "application/json"},
                 json=payload,
                 timeout=request_timeout,
-                stream=stream_ollama,  # Pass stream=True to requests.post if streaming
+                stream=stream_llama_cpp,
             )
-            response.raise_for_status()  # Raises HTTPError for bad responses (4XX, 5XX)
+            response.raise_for_status()
 
-            if stream_ollama:
-                logging.info(f"Streaming Ollama response for model '{model_name}':")
+            if stream_llama_cpp:
+                logging.info(f"Streaming llama.cpp response for model '{model_name}':")
                 full_response_text_parts = []
                 repetition_check_config = config.get("repetition_check", {})
-                print(f"\n--- Ollama Stream ({model_name}) ---")
+                print(f"\n--- llama.cpp Stream ({model_name}) ---")
                 for line in response.iter_lines():
                     if line:
-                        decoded_line = line.decode("utf-8")
+                        decoded_line = (
+                            line.decode("utf-8") if isinstance(line, bytes) else line
+                        )
+                        if decoded_line.startswith("data: "):
+                            json_str = decoded_line[6:].strip()
+                        elif decoded_line.startswith("data:"):
+                            json_str = decoded_line[5:].strip()
+                        else:
+                            json_str = decoded_line.strip()
+
+                        if json_str == "[DONE]":
+                            break
+
                         try:
-                            chunk = json.loads(decoded_line)
+                            chunk = json.loads(json_str)
                             if "error" in chunk:
                                 logging.error(
-                                    f"Ollama API error during stream for model '{model_name}': {chunk['error']}"
+                                    f"llama.cpp API error during stream for model '{model_name}': {chunk['error']}"
                                 )
-                                print(f"\n--- End Ollama Stream (Error) ---")
+                                print(f"\n--- End llama.cpp Stream (Error) ---")
                                 return None
 
-                            response_part = chunk.get("response", "")
+                            response_part = ""
+                            if "content" in chunk:
+                                response_part = chunk.get("content", "")
+                            elif "choices" in chunk and chunk["choices"]:
+                                choice = chunk["choices"][0]
+                                if "text" in choice:
+                                    response_part = choice.get("text", "")
+                                elif "delta" in choice and "content" in choice["delta"]:
+                                    response_part = choice["delta"].get("content", "")
+                            elif "response" in chunk:
+                                response_part = chunk.get("response", "")
+
                             print(response_part, end="", flush=True)
                             full_response_text_parts.append(response_part)
 
@@ -543,31 +324,37 @@ def _call_ollama_api_internal(prompt, config, cache_prefix=None):
                                         "Repetition detected. Terminating and retrying."
                                     )
                                     print(
-                                        "\n--- End Ollama Stream (Repetition Detected) ---"
+                                        "\n--- End llama.cpp Stream (Repetition Detected) ---"
                                     )
                                     return REPETITION_DETECTED
 
-                            if chunk.get("done"):
-                                print(f"\n--- End Ollama Stream (Done) ---")
+                            is_done = chunk.get("stop", False) or (
+                                "choices" in chunk
+                                and chunk["choices"]
+                                and chunk["choices"][0].get("finish_reason") is not None
+                            )
+                            if is_done:
+                                print(f"\n--- End llama.cpp Stream (Done) ---")
                                 logging.info(
-                                    f"Ollama API stream completed for model '{model_name}'."
+                                    f"llama.cpp API stream completed for model '{model_name}'."
                                 )
                                 final_text = "".join(full_response_text_parts).strip()
-                                return final_text.replace("</end_of_turn>", "").replace("</start_of_turn>", "")
+                                return (
+                                    final_text.replace("</end_of_turn>", "")
+                                    .replace("</start_of_turn>", "")
+                                )
                         except json.JSONDecodeError:
                             logging.error(
-                                f"Error decoding JSON chunk from Ollama stream: {decoded_line}"
+                                f"Error decoding JSON chunk from llama.cpp stream: {decoded_line}"
                             )
-                            print(f"\n--- End Ollama Stream (JSON Error) ---")
+                            print(f"\n--- End llama.cpp Stream (JSON Error) ---")
                             return None
-                print(f"\n--- End Ollama Stream (Unexpected End) ---")
-                logging.warning(
-                    "Ollama stream ended without a 'done: true' message."
-                )
+                print(f"\n--- End llama.cpp Stream (Done) ---")
                 return (
                     "".join(full_response_text_parts)
                     .strip()
-                    .replace("</end_of_turn>", "").replace("</start_of_turn>", "")
+                    .replace("</end_of_turn>", "")
+                    .replace("</start_of_turn>", "")
                     if full_response_text_parts
                     else None
                 )
@@ -575,48 +362,53 @@ def _call_ollama_api_internal(prompt, config, cache_prefix=None):
                 response_data = response.json()
                 if "error" in response_data:
                     logging.error(
-                        f"Ollama API error for model '{model_name}': {response_data['error']}"
+                        f"llama.cpp API error for model '{model_name}': {response_data['error']}"
                     )
                     return None
-                if "response" in response_data:
+
+                response_text = None
+                if "content" in response_data:
+                    response_text = response_data["content"]
+                elif "choices" in response_data and response_data["choices"]:
+                    choice = response_data["choices"][0]
+                    if "text" in choice:
+                        response_text = choice.get("text")
+                    elif "message" in choice and "content" in choice["message"]:
+                        response_text = choice["message"].get("content")
+                elif "response" in response_data:
                     response_text = response_data["response"]
+
+                if response_text is not None:
                     logging.info(
-                        f"Ollama API call successful for model '{model_name}'."
+                        f"llama.cpp API call successful for model '{model_name}'."
                     )
-                    return response_text.strip().replace("</end_of_turn>", "").replace("</start_of_turn>", "")
+                    return (
+                        response_text.strip()
+                        .replace("</end_of_turn>", "")
+                        .replace("</start_of_turn>", "")
+                    )
                 else:
                     logging.error(
-                        f"Ollama API response for model '{model_name}' did not contain 'response' key. Attempt {attempt + 1}/{max_retries}. Data: {response_data}"
+                        f"llama.cpp API response for model '{model_name}' did not contain expected content key. Attempt {attempt + 1}/{max_retries}. Data: {response_data}"
                     )
 
         except requests.exceptions.HTTPError as e:
             logging.error(
-                f"Ollama API call (model '{model_name}') attempt {attempt + 1} failed with HTTPError: {e}. Status: {e.response.status_code}",
+                f"llama.cpp API call (model '{model_name}') attempt {attempt + 1} failed with HTTPError: {e}. Status: {e.response.status_code if e.response is not None else 'unknown'}",
                 exc_info=True,
             )
-            if e.response.status_code == 404:  # Model not found
-                try:
-                    error_detail = e.response.json().get("error", "Model not found")
-                    logging.error(
-                        f"Ollama model '{model_name}' not found: {error_detail}. Please ensure the model is pulled and available."
-                    )
-                except json.JSONDecodeError:
-                    logging.error(f"Ollama model '{model_name}' not found (404).")
-                return None  # Don't retry if model not found
-        except (
-            requests.exceptions.RequestException
-        ) as e:  # Covers ConnectionError, Timeout, etc.
+        except requests.exceptions.RequestException as e:
             logging.error(
-                f"Ollama API call (model '{model_name}') attempt {attempt + 1} failed: {e}",
+                f"llama.cpp API call (model '{model_name}') attempt {attempt + 1} failed: {e}",
                 exc_info=True,
             )
 
         if attempt < max_retries - 1:
-            logging.info(f"Retrying Ollama API call in {retry_delay} seconds...")
+            logging.info(f"Retrying llama.cpp API call in {retry_delay} seconds...")
             time.sleep(retry_delay)
         else:
             logging.error(
-                f"Ollama API call for model '{model_name}' failed after {max_retries} attempts."
+                f"llama.cpp API call for model '{model_name}' failed after {max_retries} attempts."
             )
             if api_settings_conf.get("terminate_on_api_failure", False):
                 logging.critical(
@@ -624,12 +416,12 @@ def _call_ollama_api_internal(prompt, config, cache_prefix=None):
                 )
                 sys.exit(1)
             return None
-    return None  # Should be covered by loop logic, but as a safeguard
+    return None
 
 
 def call_llm_api(prompt, config, cache_prefix=None):
     """
-    Calls the configured LLM API (Gemini or Ollama), using caching and handling retries.
+    Calls the configured LLM API (llama.cpp), using caching and handling retries.
     Includes special handling for repetition detection.
     """
     cache_dir = config.get("cache_dir", "api_cache")
@@ -638,7 +430,7 @@ def call_llm_api(prompt, config, cache_prefix=None):
         return cached_response
 
     api_settings = config.get("api_settings", {})
-    api_provider = api_settings.get("provider", "gemini")
+    api_provider = api_settings.get("provider", "llama_cpp")
     logging.info(
         f"Calling {api_provider.upper()} API... (Cache Prefix: {cache_prefix or 'None'})"
     )
@@ -653,10 +445,8 @@ def call_llm_api(prompt, config, cache_prefix=None):
     response_text = None
 
     for attempt in range(max_retries_repetition + 1):
-        if api_provider == "gemini":
-            response_text = _call_gemini_api_internal(prompt, config, cache_prefix)
-        elif api_provider == "ollama":
-            response_text = _call_ollama_api_internal(prompt, config, cache_prefix)
+        if api_provider in ("llama_cpp", "llama.cpp"):
+            response_text = _call_llama_cpp_api_internal(prompt, config, cache_prefix)
         else:
             logging.error(f"Unsupported API provider: {api_provider}")
             return None

@@ -117,21 +117,19 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(tab)
         self.tabs.addTab(tab, "API")
 
-        self.widgets['api_settings'] = {'gemini': {}, 'ollama': {}}
+        self.widgets['api_settings'] = {'llama_cpp': {}}
 
         # Provider selection
         provider_layout = QFormLayout()
         self.widgets['api_settings']['provider'] = QComboBox()
-        self.widgets['api_settings']['provider'].addItems(["gemini", "ollama"])
+        self.widgets['api_settings']['provider'].addItems(["llama_cpp"])
         provider_layout.addRow("API Provider:", self.widgets['api_settings']['provider'])
         layout.addLayout(provider_layout)
 
         # Provider-specific settings
         self.provider_stack = QStackedWidget()
-        gemini_widget = self._create_gemini_group()
-        ollama_widget = self._create_ollama_group()
-        self.provider_stack.addWidget(gemini_widget)
-        self.provider_stack.addWidget(ollama_widget)
+        llama_cpp_widget = self._create_llama_cpp_group()
+        self.provider_stack.addWidget(llama_cpp_widget)
         layout.addWidget(self.provider_stack)
         self.widgets['api_settings']['provider'].currentIndexChanged.connect(self.provider_stack.setCurrentIndex)
 
@@ -146,33 +144,20 @@ class MainWindow(QMainWindow):
         common_layout.addRow("Default Retry Delay (s):", self.widgets['api_settings']['default_retry_delay_seconds'])
         layout.addWidget(common_group)
 
-    def _create_gemini_group(self):
-        group = QGroupBox("Gemini Settings")
+    def _create_llama_cpp_group(self):
+        group = QGroupBox("llama.cpp Settings")
         layout = QFormLayout(group)
-        self.widgets['api_settings']['gemini']['model'] = QLineEdit()
-        layout.addRow("Model:", self.widgets['api_settings']['gemini']['model'])
-        self.widgets['api_settings']['gemini']['temperature'] = QDoubleSpinBox()
-        layout.addRow("Temperature:", self.widgets['api_settings']['gemini']['temperature'])
-        self.widgets['api_settings']['gemini']['max_retries'] = QSpinBox()
-        layout.addRow("Max Retries:", self.widgets['api_settings']['gemini']['max_retries'])
-        self.widgets['api_settings']['gemini']['retry_delay_seconds'] = QSpinBox()
-        layout.addRow("Retry Delay (s):", self.widgets['api_settings']['gemini']['retry_delay_seconds'])
-        return group
-
-    def _create_ollama_group(self):
-        group = QGroupBox("Ollama Settings")
-        layout = QFormLayout(group)
-        self.widgets['api_settings']['ollama']['base_url'] = QLineEdit()
-        layout.addRow("Base URL:", self.widgets['api_settings']['ollama']['base_url'])
-        self.widgets['api_settings']['ollama']['model'] = QLineEdit()
-        layout.addRow("Model:", self.widgets['api_settings']['ollama']['model'])
-        self.widgets['api_settings']['ollama']['tokenizer_model'] = QLineEdit()
-        layout.addRow("Tokenizer Model:", self.widgets['api_settings']['ollama']['tokenizer_model'])
-        self.widgets['api_settings']['ollama']['temperature'] = QDoubleSpinBox()
-        layout.addRow("Temperature:", self.widgets['api_settings']['ollama']['temperature'])
-        self.widgets['api_settings']['ollama']['context_window_size'] = QSpinBox()
-        self.widgets['api_settings']['ollama']['context_window_size'].setMaximum(99999)
-        layout.addRow("Context Window:", self.widgets['api_settings']['ollama']['context_window_size'])
+        self.widgets['api_settings']['llama_cpp']['base_url'] = QLineEdit()
+        layout.addRow("Base URL:", self.widgets['api_settings']['llama_cpp']['base_url'])
+        self.widgets['api_settings']['llama_cpp']['model'] = QLineEdit()
+        layout.addRow("Model:", self.widgets['api_settings']['llama_cpp']['model'])
+        self.widgets['api_settings']['llama_cpp']['tokenizer_model'] = QLineEdit()
+        layout.addRow("Tokenizer Model:", self.widgets['api_settings']['llama_cpp']['tokenizer_model'])
+        self.widgets['api_settings']['llama_cpp']['temperature'] = QDoubleSpinBox()
+        layout.addRow("Temperature:", self.widgets['api_settings']['llama_cpp']['temperature'])
+        self.widgets['api_settings']['llama_cpp']['context_window_size'] = QSpinBox()
+        self.widgets['api_settings']['llama_cpp']['context_window_size'].setMaximum(999999)
+        layout.addRow("Context Window:", self.widgets['api_settings']['llama_cpp']['context_window_size'])
         return group
 
     def _create_style_tab(self):
@@ -274,8 +259,11 @@ class MainWindow(QMainWindow):
 
         # API Settings
         api_settings = self.config.get('api_settings', {})
-        self.widgets['api_settings']['provider'].setCurrentText(api_settings.get('provider', 'gemini'))
-        for provider in ['gemini', 'ollama']:
+        current_provider = api_settings.get('provider', 'llama_cpp')
+        if current_provider not in ['llama_cpp']:
+            current_provider = 'llama_cpp'
+        self.widgets['api_settings']['provider'].setCurrentText(current_provider)
+        for provider in ['llama_cpp']:
             provider_settings = api_settings.get(provider, {})
             for key, widget in self.widgets['api_settings'][provider].items():
                 value = provider_settings.get(key)
@@ -323,7 +311,9 @@ class MainWindow(QMainWindow):
         # API Settings
         api_settings = self.config['api_settings']
         api_settings['provider'] = self.widgets['api_settings']['provider'].currentText()
-        for provider in ['gemini', 'ollama']:
+        for provider in ['llama_cpp']:
+            if provider not in api_settings:
+                api_settings[provider] = {}
             for key, widget in self.widgets['api_settings'][provider].items():
                 api_settings[provider][key] = widget.text() if isinstance(widget, QLineEdit) else widget.value()
 

@@ -1,33 +1,35 @@
+import json
 import unittest
 from unittest.mock import patch, MagicMock
-import sys
 
-# Mock google.generativeai before importing the module
-sys.modules["google.generativeai"] = MagicMock()
-
-from book_generator.llm_api import call_llm_api
+import requests
+from book_generator.llm_api import (
+    call_llm_api,
+    _call_llama_cpp_api_internal,
+)
 from book_generator.constants import REPETITION_DETECTED
+
 
 class TestLlmApi(unittest.TestCase):
     @patch("os.remove")
     @patch("book_generator.llm_api.get_cache_path")
     @patch("book_generator.llm_api.load_from_cache")
-    @patch("book_generator.llm_api._call_ollama_api_internal")
-    def test_repetition_detection_and_retry_ollama(
+    @patch("book_generator.llm_api._call_llama_cpp_api_internal")
+    def test_repetition_detection_and_retry_llama_cpp(
         self,
-        mock_call_ollama,
+        mock_call_llama_cpp,
         mock_load_from_cache,
         mock_get_cache_path,
         mock_os_remove,
     ):
         # Arrange
         mock_load_from_cache.return_value = None
-        mock_call_ollama.side_effect = [REPETITION_DETECTED, "successful response"]
+        mock_call_llama_cpp.side_effect = [REPETITION_DETECTED, "successful response"]
         mock_get_cache_path.return_value = MagicMock()
         mock_get_cache_path.return_value.exists.return_value = True
 
         config = {
-            "api_settings": {"provider": "ollama"},
+            "api_settings": {"provider": "llama_cpp"},
             "repetition_check": {
                 "enabled": True,
                 "max_retries_on_repetition": 1,
@@ -41,43 +43,161 @@ class TestLlmApi(unittest.TestCase):
 
         # Assert
         self.assertEqual(result, "successful response")
-        self.assertEqual(mock_call_ollama.call_count, 2)
+        self.assertEqual(mock_call_llama_cpp.call_count, 2)
         mock_os_remove.assert_called_once_with(mock_get_cache_path.return_value)
 
-    @patch("os.remove")
-    @patch("book_generator.llm_api.get_cache_path")
-    @patch("book_generator.llm_api.load_from_cache")
-    @patch("book_generator.llm_api._call_gemini_api_internal")
-    def test_repetition_detection_and_retry_gemini(
-        self,
-        mock_call_gemini,
-        mock_load_from_cache,
-        mock_get_cache_path,
-        mock_os_remove,
-    ):
-        # Arrange
-        mock_load_from_cache.return_value = None
-        mock_call_gemini.side_effect = [REPETITION_DETECTED, "successful response"]
-        mock_get_cache_path.return_value = MagicMock()
-        mock_get_cache_path.return_value.exists.return_value = True
+    @patch("requests.post")
+    def test_llama_cpp_non_streaming_native(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1, 2, 3, 4]}
+
+        mock_completion_resp = MagicMock()
+        mock_completion_resp.status_code = 200
+        mock_completion_resp.json.return_value = {
+            "content": "Generated story text",
+            "stop": True,
+        }
+        mock_post.side_effect = [mock_tokenize_resp, mock_completion_resp]
 
         config = {
-            "api_settings": {"provider": "gemini"},
+            "api_settings": {
+                "provider": "llama_cpp",
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                    "model": "llama-3",
+                    "temperature": 0.7,
+                },
+            },
+            "debug_options": {"verbose_debug": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Write a chapter.", config)
+        self.assertEqual(result, "Generated story text")
+        self.assertEqual(mock_post.call_count, 2)
+        # Check completion call args
+        completion_call = mock_post.call_args_list[1]
+        args, kwargs = completion_call
+        self.assertEqual(args[0], "http://localhost:8080/completion")
+        self.assertEqual(kwargs["json"]["prompt"], "Write a chapter.")
+        self.assertEqual(kwargs["json"]["temperature"], 0.7)
+        self.assertFalse(kwargs["stream"])
+
+    @patch("requests.post")
+    def test_llama_cpp_non_streaming_openai_format(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 404
+
+        mock_completion_resp = MagicMock()
+        mock_completion_resp.status_code = 200
+        mock_completion_resp.json.return_value = {
+            "choices": [{"text": "OpenAI format text"}]
+        }
+        mock_post.side_effect = [mock_tokenize_resp, mock_completion_resp]
+
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                },
+            },
+            "debug_options": {"verbose_debug": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Test prompt", config)
+        self.assertEqual(result, "OpenAI format text")
+
+    @patch("requests.post")
+    def test_llama_cpp_streaming_success(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1, 2]}
+
+        mock_stream_resp = MagicMock()
+        mock_stream_resp.status_code = 200
+        mock_stream_resp.iter_lines.return_value = [
+            b'data: {"content": "Once "}',
+            b'data: {"content": "upon "}',
+            b'data: {"content": "a time.", "stop": true}',
+        ]
+        mock_post.side_effect = [mock_tokenize_resp, mock_stream_resp]
+
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                },
+            },
+            "debug_options": {"verbose_debug": True},
+            "repetition_check": {"enabled": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Tell a tale.", config)
+        self.assertEqual(result, "Once upon a time.")
+
+    @patch("requests.post")
+    def test_llama_cpp_streaming_repetition_detected(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1, 2]}
+
+        mock_stream_resp = MagicMock()
+        mock_stream_resp.status_code = 200
+        mock_stream_resp.iter_lines.return_value = [
+            b'data: {"content": "This is a repeating sentence."}',
+            b'data: {"content": " This is a repeating sentence."}',
+        ]
+        mock_post.side_effect = [mock_tokenize_resp, mock_stream_resp]
+
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                },
+            },
+            "debug_options": {"verbose_debug": True},
             "repetition_check": {
                 "enabled": True,
-                "max_retries_on_repetition": 1,
-                "repetition_retry_delay_seconds": 0,
+                "min_sentence_length_for_repetition_check": 10,
             },
         }
-        prompt = "test prompt"
 
-        # Act
-        result = call_llm_api(prompt, config)
+        result = _call_llama_cpp_api_internal("Echo.", config)
+        self.assertEqual(result, REPETITION_DETECTED)
 
-        # Assert
-        self.assertEqual(result, "successful response")
-        self.assertEqual(mock_call_gemini.call_count, 2)
-        mock_os_remove.assert_called_once_with(mock_get_cache_path.return_value)
+    @patch("time.sleep")
+    @patch("requests.post")
+    def test_llama_cpp_retry_on_failure(self, mock_post, mock_sleep):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1]}
 
-if __name__ == "__main__":
-    unittest.main()
+        mock_err_resp = MagicMock()
+        mock_err_resp.status_code = 500
+        http_err = requests.exceptions.HTTPError(response=mock_err_resp)
+
+        mock_ok_resp = MagicMock()
+        mock_ok_resp.status_code = 200
+        mock_ok_resp.json.return_value = {"content": "Recovered response"}
+
+        mock_post.side_effect = [mock_tokenize_resp, http_err, mock_ok_resp]
+
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                    "max_retries": 2,
+                    "retry_delay_seconds": 1,
+                },
+            },
+            "debug_options": {"verbose_debug": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Retry prompt", config)
+        self.assertEqual(result, "Recovered response")
+        mock_sleep.assert_called_once_with(1)
+
+    @patch("requests.post")
+    def test_llama_cpp_disable_reasoning_payload(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200

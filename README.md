@@ -1,10 +1,10 @@
 # LLM Book Generator 📚🤖
 
-LLM Book Generator is a powerful Python-based command-line tool that automates the creation of entire books, from initial concept to a fully formatted DOCX manuscript. It leverages Large Language Models (LLMs) like Google's Gemini and local Ollama instances to generate diverse content, including titles, chapter outlines, detailed section text, front and back matter, and even marketing materials.
+LLM Book Generator is a powerful Python-based command-line tool that automates the creation of entire books, from initial concept to a fully formatted DOCX manuscript. It leverages Large Language Models (LLMs) via llama.cpp to generate diverse content, including titles, chapter outlines, detailed section text, front and back matter, and even marketing materials.
 
 ## Features
 
-*   **Dual LLM Support:** Seamlessly integrates with Google Gemini (cloud-based) and Ollama (local).
+*   **llama.cpp Support:** Seamlessly integrates with llama.cpp server (`llama-server`).
 *   **Comprehensive Content Generation:** Creates everything from titles and chapter outlines to front and back matter.
 *   **LaTeX Math Rendering:** Converts LaTeX math expressions into high-quality images.
 *   **Advanced DOCX Styling:** Produces professionally formatted DOCX files with customizable styles.
@@ -17,7 +17,7 @@ LLM Book Generator is a powerful Python-based command-line tool that automates t
 
 *   Python 3.8+
 *   A LaTeX distribution (e.g., [MiKTeX](https://miktex.org/), [MacTeX](https://www.tug.org/mactex/), [TeX Live](https://www.tug.org/texlive/))
-*   A Google Gemini API key or a running Ollama instance.
+*   A running [llama.cpp server](https://github.com/ggerganov/llama.cpp) instance (`llama-server`).
 
 ### Installation
 
@@ -32,10 +32,10 @@ LLM Book Generator is a powerful Python-based command-line tool that automates t
     pip install -r requirements.txt
     ```
 
-3.  **Set up your API key (for Gemini):**
-    Create a `.env` file in the project root and add your Gemini API key:
+3.  **Set up environment (Optional):**
+    If using Hugging Face tokenizers requiring authentication, create a `.env` file in the project root:
     ```
-    GEMINI_API_KEY="YOUR_API_KEY"
+    HF_TOKEN="YOUR_HUGGING_FACE_TOKEN"
     ```
 
 ## How to Run
@@ -52,7 +52,7 @@ LLM Book Generator is a powerful Python-based command-line tool that automates t
 ## Troubleshooting
 
 *   **LaTeX Math Rendering Issues:** Ensure your LaTeX distribution is installed correctly and accessible from your system's PATH.
-*   **API Errors:** Double-check your API keys and ensure that your LLM provider (Gemini or Ollama) is running and accessible.
+*   **API Errors:** Ensure that your llama.cpp server is running and accessible (default: `http://localhost:8080`).
 *   **File Permissions:** Make sure the script has write access to the output and cache directories.
 
 ## Contributing

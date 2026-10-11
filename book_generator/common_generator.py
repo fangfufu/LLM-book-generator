@@ -18,7 +18,7 @@ def generate_random_gender(config):
 
 
 def determine_gender_from_name(config, author_name):
-    """Determines the likely gender (male/female) based on the author's name using the Gemini API."""
+    """Determines the likely gender (male/female) based on the author's name using the LLM API."""
     logging.info(f"Attempting to determine gender for author name: '{author_name}'...")
 
     # Check if the name seems valid (basic check)
@@ -70,7 +70,7 @@ Do not add any introductory text, explanations, or quotation marks. Just the sin
 
 
 def generate_random_name(config, gender):
-    """Generates a random author name based on the specified gender using the Gemini API."""
+    """Generates a random author name based on the specified gender using the LLM API."""
     logging.info(f"Auto-generating random author name for gender: {gender}...")
     prompt = f"""Generate a single, plausible-sounding full name (first and last name)
 for a fictional author. The author's gender is {gender}.
@@ -99,7 +99,7 @@ Do not add introductory text, explanations, or quotation marks."""
 
 def generate_random_topic(config):
     """
-    Generates a book topic using the Gemini API.
+    Generates a book topic using the LLM API.
     Uses a seed from config if provided, otherwise generates a random one.
     """
     logging.info("Determining topic seed...")
@@ -150,7 +150,7 @@ Output in British English."""
 
 
 def generate_setting(config):
-    """Generates the setting using the Gemini API based on the main topic."""
+    """Generates the setting using the LLM API based on the main topic."""
     logging.info("Auto-generating setting...")
     main_topic = config.get("generation_params", {}).get(
         "main_topic", "[No Main Topic Provided]"
@@ -181,7 +181,7 @@ Output in British English."""
 
 
 def generate_writing_tone(config, is_fiction=False):
-    """Generates a suitable writing tone using the Gemini API."""
+    """Generates a suitable writing tone using the LLM API."""
     logging.info(f"Auto-generating writing tone (is_fiction: {is_fiction})...")
     main_topic = config.get("generation_params", {}).get(
         "main_topic", "[No Main Topic Provided]"
@@ -220,7 +220,7 @@ text. Output in British English."""
 
 
 def generate_book_title(config):
-    """Generates the book title using the Gemini API. Exits script on failure."""
+    """Generates the book title using the LLM API. Exits script on failure."""
     logging.info("Generating book title...")
     prompt = f"""Generate the book title for a book about
 '{config['generation_params']['main_topic']}'. The setting of the book is
@@ -284,7 +284,7 @@ Do not add introductory text. Output in British English."""
 
 def is_book_non_fiction(config, book_title):
     """
-    Determines if the book is likely non-fiction using the Gemini API.
+    Determines if the book is likely non-fiction using the LLM API.
     Caches the result in config['generation_params']['is_fiction'].
     Returns True if likely non-fiction, False otherwise (fiction or indeterminate).
     """
@@ -328,7 +328,7 @@ Is this book most likely non-fiction?
 Answer with only 'yes' or 'no'. Do not add any explanations, quotation marks, or other text. Just the single word.
 """
     logging.info(
-        f"Asking Gemini if book '{book_title}' is non-fiction for character list decision..."
+        f"Asking LLM if book '{book_title}' is non-fiction for character list decision..."
     )
 
     # Create a cache prefix for this specific query
@@ -341,22 +341,22 @@ Answer with only 'yes' or 'no'. Do not add any explanations, quotation marks, or
     if response_text:
         answer = response_text.strip().lower()
         if answer == "yes":
-            logging.info(f"Gemini indicates book '{book_title}' is likely non-fiction.")
+            logging.info(f"LLM indicates book '{book_title}' is likely non-fiction.")
             determined_is_non_fiction = True
         elif answer == "no":
             logging.info(
-                f"Gemini indicates book '{book_title}' is likely fiction or its type is indeterminate."
+                f"LLM indicates book '{book_title}' is likely fiction or its type is indeterminate."
             )
             determined_is_non_fiction = False
         else:
             logging.error(
-                f"Unexpected response from Gemini for non-fiction check ('{response_text}'). "
+                f"Unexpected response from LLM for non-fiction check ('{response_text}'). "
                 "Treating as fiction/indeterminate."
             )
             # determined_is_non_fiction remains False
     else:
         logging.error(
-            f"Failed to get response from Gemini for non-fiction check for '{book_title}'. "
+            f"Failed to get response from LLM for non-fiction check for '{book_title}'. "
             "Treating as fiction/indeterminate."
         )
         # determined_is_non_fiction remains False

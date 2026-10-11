@@ -3,18 +3,16 @@
 The behavior of AI Book Weaver is primarily controlled by the `config.yaml` file. Below is an overview of its main sections and common options.
 
 *   **`api_settings`**: Configures the LLM provider and caching.
-    *   `provider`: Set to `"gemini"` or `"ollama"`.
-    *   `gemini`:
-        *   `model`: E.g., `"gemini-1.5-flash-latest"`.
+    *   `provider`: Set to `"llama_cpp"`.
+    *   `llama_cpp`:
+        *   `base_url`: E.g., `"http://localhost:8080"`.
+        *   `model`: E.g., `"llama-3"`.
         *   `temperature`: Controls randomness (e.g., `0.8`).
+        *   `tokenizer_model`: (Optional) For client-side token counting if server `/tokenize` is not used, e.g., `"NousResearch/Meta-Llama-3-8B-Instruct"`.
+        *   `context_window_size`: (Optional) Context window size (`n_ctx`) for llama.cpp.
+        *   `llm_options`: (Optional) Additional parameters passed directly to llama.cpp (e.g. `n_predict`, `top_k`, `top_p`, `repeat_penalty`, `reasoning_budget`).
         *   `max_retries`, `retry_delay_seconds`: For API call resilience.
-        *   `safety_settings`: Configure content safety filters.
-    *   `ollama`:
-        *   `base_url`: E.g., `"http://localhost:11434"`.
-        *   `model`: E.g., `"llama3"`.
-        *   `temperature`: E.g., `0.7`.
-        *   `tokenizer_model`: (Optional) For client-side token counting, e.g., `"NousResearch/Llama-3-8B-Instruct-hf"`.
-        *   `context_window_size`: (Optional) `num_ctx` for Ollama.
+        *   `request_timeout_seconds`: Timeout for API requests in seconds.
     *   `base_cache_dir`: Path for API call caching (default: `"api_cache"`).
     *   `default_max_retries`, `default_retry_delay_seconds`: Global retry defaults.
 
@@ -53,14 +51,12 @@ The behavior of AI Book Weaver is primarily controlled by the `config.yaml` file
 **Example `config.yaml` Snippet:**
 *   ```yaml
     api_settings:
-      provider: "gemini" # or "ollama"
-      gemini:
-        model: "gemini-1.5-flash-latest"
-        temperature: 0.85
-      # ollama:
-      #   base_url: "http://localhost:11434"
-      #   model: "llama3"
-      #   temperature: 0.7
+      provider: "llama_cpp"
+      llama_cpp:
+        base_url: "http://localhost:8080"
+        model: "llama-3"
+        temperature: 0.8
+        context_window_size: 4096
       base_cache_dir: "api_cache" # Cache stored here
 
     generation_params:

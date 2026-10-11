@@ -479,30 +479,44 @@ def run_generation_process():
 
     api_settings = config.get("api_settings", {})
 
-    api_provider = api_settings.get("provider", "gemini")
-    if api_provider == "gemini":
-        logging.info("Gemini API provider configured.")
-    elif api_provider == "ollama":
-        ollama_settings = config.get("ollama_settings", {})
-        ollama_base_url = ollama_settings.get("base_url", "http://localhost:11434")
+    api_provider = api_settings.get("provider", "llama_cpp")
+    if api_provider in ("llama_cpp", "llama.cpp"):
+        llama_cpp_settings = api_settings.get(
+            "llama_cpp", config.get("llama_cpp_settings", {})
+        )
+        llama_cpp_base_url = llama_cpp_settings.get(
+            "base_url", "http://localhost:8080"
+        )
         try:
             logging.info(
-                f"Ollama API provider selected. Attempting to connect to: {ollama_base_url}"
+                f"llama.cpp API provider selected. Attempting to connect to: {llama_cpp_base_url}"
             )
-            requests.get(
-                f"{ollama_base_url.rstrip('/')}/api/tags", timeout=5
-            ).raise_for_status()
+            connected = False
+            for endpoint in ["/health", "/props", "/v1/models", ""]:
+                try:
+                    resp = requests.get(
+                        f"{llama_cpp_base_url.rstrip('/')}{endpoint}", timeout=5
+                    )
+                    if resp.status_code < 500:
+                        connected = True
+                        break
+                except requests.exceptions.RequestException:
+                    continue
+            if not connected:
+                raise requests.exceptions.ConnectionError(
+                    f"Could not connect to llama.cpp server at {llama_cpp_base_url}"
+                )
             logging.info(
-                f"Successfully connected to Ollama server at {ollama_base_url}"
+                f"Successfully connected to llama.cpp server at {llama_cpp_base_url}"
             )
         except requests.exceptions.RequestException as e:
             logging.error(
-                f"Error: Could not connect or communicate with Ollama server at {ollama_base_url}. Error: {e}. Please ensure Ollama is running and accessible."
+                f"Error: Could not connect or communicate with llama.cpp server at {llama_cpp_base_url}. Error: {e}. Please ensure llama.cpp is running and accessible."
             )
             sys.exit(1)
     else:
         logging.error(
-            f"Unsupported API provider '{api_provider}' specified in config. Supported: 'gemini', 'ollama'. Exiting."
+            f"Unsupported API provider '{api_provider}' specified in config. Supported: 'llama_cpp'. Exiting."
         )
         sys.exit(1)
 
@@ -547,12 +561,9 @@ def run_generation_process():
     topic_hash = hashlib.sha1(main_topic.encode("utf-8")).hexdigest()[:8]
     topic_dir_name = f"{sanitized_topic}_{topic_hash}"
 
-    if api_provider == "gemini":
-        gemini_conf = api_settings.get("gemini", {})
-        model_name_for_cache = gemini_conf.get("model", "gemini-2.0-flash-latest")
-    elif api_provider == "ollama":
-        ollama_conf = api_settings.get("ollama", {})
-        model_name_for_cache = ollama_conf.get("model", "ollama_default_model")
+    if api_provider in ("llama_cpp", "llama.cpp"):
+        llama_cpp_conf = api_settings.get("llama_cpp", api_settings.get("llama.cpp", {}))
+        model_name_for_cache = llama_cpp_conf.get("model", "llama_cpp_default_model")
     else:
         model_name_for_cache = "unknown_api_provider_model"
     sanitized_model_name = sanitize_filename(model_name_for_cache, 30)
