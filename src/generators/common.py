@@ -7,8 +7,8 @@ import uuid
 
 from random_words import RandomWords
 
-from book_generator.llm_api import call_llm_api
-from book_generator.utils import sanitize_filename
+from src.llm import call_llm_api
+from src.utils import sanitize_filename
 
 
 # --- Book Generation Functions ---
@@ -75,8 +75,8 @@ def generate_random_name(config, gender):
     prompt = f"""Generate a single, plausible-sounding full name (first and last name)
 for a fictional author. The author's gender is {gender}.
 The author is notionally writing a book about
-'{config['generation_params']['main_topic']}'. The setting of the book is
-described as: {config['generation_params']['setting']}.
+'{config["generation_params"]["main_topic"]}'. The setting of the book is
+described as: {config["generation_params"]["setting"]}.
 Consider a name that might appear on a book. Output *only* the full name.
 Do not add introductory text, explanations, or quotation marks."""
 
@@ -223,8 +223,8 @@ def generate_book_title(config):
     """Generates the book title using the LLM API. Exits script on failure."""
     logging.info("Generating book title...")
     prompt = f"""Generate the book title for a book about
-'{config['generation_params']['main_topic']}'. The setting of the book is
-described as: {config['generation_params']['setting']}.
+'{config["generation_params"]["main_topic"]}'. The setting of the book is
+described as: {config["generation_params"]["setting"]}.
 Do not generate a two-part title. The generated title must not contain a subtitle.
 Provide only the title text. Do not add introductory text. The title must not
 contain these punctuations: '-' or ':'. Output one title only. Output in
@@ -256,9 +256,9 @@ def generate_book_subtitle(config, book_title, summary_context):
     )
 
     prompt = f"""Generate a subtitle for the book titled '{book_title}'.
-The main topic of the book is '{config['generation_params']['main_topic']}'.
+The main topic of the book is '{config["generation_params"]["main_topic"]}'.
 The setting of the book described as:
-{config['generation_params']['setting']}.
+{config["generation_params"]["setting"]}.
 {summary_context}
 The subtitle should complement the main title.
 Do not generate a two-part subtitle.
@@ -299,9 +299,7 @@ def is_book_non_fiction(config, book_title):
             f"Using cached 'is_fiction' status for book '{book_title}': {is_fiction_cached}. "
             f"Returning non-fiction status: {not is_fiction_cached}."
         )
-        return (
-            not is_fiction_cached
-        )  # True if non-fiction (is_fiction is False), False if fiction (is_fiction is True)
+        return not is_fiction_cached  # True if non-fiction (is_fiction is False), False if fiction (is_fiction is True)
 
     # If not cached, proceed with API call
     main_topic = gen_params.get("main_topic", "[No Main Topic Provided]")
@@ -438,7 +436,7 @@ of their role, personality, or significance within the story.
 Do not use words that express uncertainty in the description.
 Each character should be a unique individual.
 Do not generate character groups.
-Do not generate unamed characters.
+Do not generate unnamed characters.
 
 Format the output as a Markdown bulleted list. Each character should be an item.
 Start the item with the character's name in bold, followed by a colon, and then the description.
@@ -451,7 +449,7 @@ a setting described as: "{setting}".
 Generate a list of characters who appear in this book.
 For each character, provide their full name and a brief description
 of their role, personality, or significance within the context of the topic and setting.
-Do not generate unamed characters. For characters who do not have names, invent names.
+Do not generate unnamed characters. For characters who do not have names, invent names.
 Do not use words that express uncertainty in the description. Do not use words such as "likely" or "potentially"
 
 Format the output as a Markdown bulleted list. Each character should be an item.
@@ -633,14 +631,6 @@ Output in British English.
         return character_list
 
 
-
-
-
-
-
-
-
-
 def generate_chapter_summary(
     config,
     chapter_title,
@@ -727,10 +717,6 @@ Output in British English."""
         return f"Placeholder summary for chapter '{chapter_title}' focusing on {config['generation_params']['main_topic']}."
 
 
-
-
-
-
 def generate_front_matter(
     config, book_title, author_name, writing_tone, summary_context
 ):
@@ -749,8 +735,7 @@ def generate_front_matter(
     }
 
     current_year = time.strftime("%Y")
-    front_matter["copyright_page"] = (
-        f"""
+    front_matter["copyright_page"] = f"""
 Copyright © {current_year} by {author_name}
 
 
@@ -788,11 +773,10 @@ a professional when appropriate. Neither the publisher nor the author shall be
 liable for any loss of profit or any other commercial damages, including but not
 limited to special, incidental, consequential, personal, or other damages.
 """.strip()
-    )
 
     common_prompt_base = f"""
-for the book '{book_title}' about {config['generation_params']['main_topic']}, with the setting:
-{config['generation_params']['setting']}. {summary_context}
+for the book '{book_title}' about {config["generation_params"]["main_topic"]}, with the setting:
+{config["generation_params"]["setting"]}. {summary_context}
 Maintain a tone that is {writing_tone}. The author of this book is {author_name}.
 Output *only* the text content for this section. Do not add introductory text.
 Output in British English.
@@ -968,7 +952,7 @@ Context for the book:
 - Desired Writing Tone: {writing_tone}
 
 Appendix Context:
-- All planned subsection titles for this appendix: {', '.join(all_subsection_titles)}
+- All planned subsection titles for this appendix: {", ".join(all_subsection_titles)}
 - Current Subsection to write content for: '{subsection_title}'
 
 Task:
@@ -1003,8 +987,8 @@ def generate_back_matter(
 
     back_matter = {}
     common_prompt_base = f"""
-of the book '{book_title}' about {config['generation_params']['main_topic']}, with the setting:
-{config['generation_params']['setting']} {summary_context}
+of the book '{book_title}' about {config["generation_params"]["main_topic"]}, with the setting:
+{config["generation_params"]["setting"]} {summary_context}
 Maintain a tone that is {writing_tone}.
 Do not add introductory text. Output *only* the text content for this section.
 Output in British English."""

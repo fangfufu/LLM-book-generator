@@ -6,9 +6,10 @@ import time
 
 import requests
 
-from book_generator.config import load_config
-from book_generator.constants import DEFAULT_WRITING_TONE
-from book_generator.common_generator import (
+from src.config import load_config
+from src.constants import DEFAULT_WRITING_TONE
+from src.emitter import assemble_docx, assemble_marketing_docx
+from src.generators.common import (
     determine_gender_from_name,
     format_character_list_for_prompt,
     format_location_list_for_prompt,
@@ -26,42 +27,38 @@ from book_generator.common_generator import (
     generate_writing_tone,
     is_book_non_fiction,
     save_summary_to_markdown,
-    update_character_list,
 )
-from book_generator.fiction_generator import (
-    generate_overall_story,
+from src.generators.fiction import (
     generate_fiction_chapter_outline,
     generate_fiction_chapter_pass1,
     generate_fiction_chapter_pass2,
-    generate_fiction_chapter_content,
-    summarize_fiction_chapter,
     generate_location_list,
-    update_location_list,
+    generate_overall_story,
+    summarize_fiction_chapter,
 )
-from book_generator.scratchpad import (
+from src.generators.non_fiction import (
+    generate_chapter_outline,
+    generate_section_content,
+    generate_section_titles,
+)
+from src.generators.scratchpad import (
+    detect_relevant_entities,
     get_scratchpad_dir,
     has_initialized_scratchpad,
     init_scratchpad,
-    load_characters_from_scratchpad,
-    load_locations_from_scratchpad,
+    load_chapter_from_scratchpad,
     load_character_summary_text,
+    load_characters_from_scratchpad,
     load_location_summary_text,
-    detect_relevant_entities,
+    load_locations_from_scratchpad,
     load_specific_character_notes,
     load_specific_location_notes,
     save_chapter_pass,
     save_chapter_summary,
-    load_chapter_from_scratchpad,
     update_scratchpad_entities,
 )
-from book_generator.non_fiction_generator import (
-    generate_chapter_outline,
-    generate_section_titles,
-    generate_section_content,
-)
-from book_generator.docx_builder import assemble_docx, assemble_marketing_docx
-from book_generator.llm_api import setup_environment
-from book_generator.utils import sanitize_filename
+from src.llm import setup_environment
+from src.utils import sanitize_filename
 
 
 def run_generation_process_fiction(config, output_base_dir, equation_image_dir):
@@ -83,7 +80,9 @@ def run_generation_process_fiction(config, output_base_dir, equation_image_dir):
 
     # 2 & 3. Create or load characters and locations from scratchpad
     if has_initialized_scratchpad(scratchpad_dir):
-        logging.info("--- Reusing existing character and location notes from scratchpad ---")
+        logging.info(
+            "--- Reusing existing character and location notes from scratchpad ---"
+        )
         character_list = load_characters_from_scratchpad(scratchpad_dir)
         location_list = load_locations_from_scratchpad(scratchpad_dir)
         generation_params["character_list"] = character_list
@@ -104,8 +103,12 @@ def run_generation_process_fiction(config, output_base_dir, equation_image_dir):
     # 4. Break down the story into chapters.
     logging.info("--- Generating Fiction Chapter Outline (Titles and Summaries) ---")
     fiction_chapter_count = generation_params.get("fiction_chapter_count", 20)
-    character_context_for_prompts = load_character_summary_text(scratchpad_dir) or format_character_list_for_prompt(character_list)
-    location_context_for_prompts = load_location_summary_text(scratchpad_dir) or format_location_list_for_prompt(location_list)
+    character_context_for_prompts = load_character_summary_text(
+        scratchpad_dir
+    ) or format_character_list_for_prompt(character_list)
+    location_context_for_prompts = load_location_summary_text(
+        scratchpad_dir
+    ) or format_location_list_for_prompt(location_list)
     chapters = generate_fiction_chapter_outline(
         config,
         overall_story,
@@ -164,7 +167,13 @@ def run_generation_process_fiction(config, output_base_dir, equation_image_dir):
             writing_tone=writing_tone,
             chapter_num=chapter_num,
         )
-        save_chapter_pass(scratchpad_dir, chapter_num, chapter_title, pass_number=1, content=pass1_content)
+        save_chapter_pass(
+            scratchpad_dir,
+            chapter_num,
+            chapter_title,
+            pass_number=1,
+            content=pass1_content,
+        )
 
         # Pass 2: Regenerate without character/location summaries, but with specific notes from scratchpad
         detected_chars, detected_locs = detect_relevant_entities(
@@ -194,7 +203,13 @@ def run_generation_process_fiction(config, output_base_dir, equation_image_dir):
             if pass2_content and "Content generation failed" not in pass2_content
             else pass1_content
         )
-        save_chapter_pass(scratchpad_dir, chapter_num, chapter_title, pass_number=2, content=final_content)
+        save_chapter_pass(
+            scratchpad_dir,
+            chapter_num,
+            chapter_title,
+            pass_number=2,
+            content=final_content,
+        )
         body_matter[chapter_title] = [{"title": "", "content": final_content}]
 
         # Summarize the final generated content
@@ -212,10 +227,14 @@ def run_generation_process_fiction(config, output_base_dir, equation_image_dir):
                     f"Failed to generate a new summary for chapter '{chapter_title}'. Falling back to original summary."
                 )
             chapter["summary"] = chapter_summary
-            save_chapter_summary(scratchpad_dir, chapter_num, chapter_title, chapter_summary)
+            save_chapter_summary(
+                scratchpad_dir, chapter_num, chapter_title, chapter_summary
+            )
 
             # Update scratchpad character and location notes based on final chapter content
-            logging.info(f"--- Updating Scratchpad Entities after Chapter {chapter_num} ---")
+            logging.info(
+                f"--- Updating Scratchpad Entities after Chapter {chapter_num} ---"
+            )
             update_scratchpad_entities(
                 config,
                 scratchpad_dir,
@@ -239,7 +258,7 @@ def run_generation_process_fiction(config, output_base_dir, equation_image_dir):
         title = chapter.get("title", "")
         summary = chapter.get("summary", "").strip()
         if title and summary:
-            summary_parts.append(f"Chapter {i+1} ('{title}'): {summary}")
+            summary_parts.append(f"Chapter {i + 1} ('{title}'): {summary}")
 
     if summary_parts:
         summary_context = "Chapter summaries:\n" + "\n\n".join(summary_parts)
@@ -331,7 +350,7 @@ def run_generation_process_non_fiction(config, output_base_dir, equation_image_d
 
     if chapter_titles:
         formatted_outline = "\n".join(
-            f"{i+1}. {title}" for i, title in enumerate(chapter_titles)
+            f"{i + 1}. {title}" for i, title in enumerate(chapter_titles)
         )
         logging.info(f"Generated Chapter Outline:\n{formatted_outline}")
     else:
@@ -344,14 +363,14 @@ def run_generation_process_non_fiction(config, output_base_dir, equation_image_d
     previous_summaries_list = []  # Keep track of summaries generated so far
 
     for i, chap_title in enumerate(chapter_titles):
-        logging.info(f"--- Generating Summary for Chapter {i+1}: {chap_title} ---")
+        logging.info(f"--- Generating Summary for Chapter {i + 1}: {chap_title} ---")
 
         # --- Create context string from previous summaries ---
         previous_summaries_context = ""
         if previous_summaries_list:
             # Format the context clearly, e.g., as a list
             context_parts = [
-                f"- Chapter {idx+1}: {s}"
+                f"- Chapter {idx + 1}: {s}"
                 for idx, s in enumerate(previous_summaries_list)
             ]
             previous_summaries_context = "\n".join(context_parts)
@@ -385,14 +404,12 @@ def run_generation_process_non_fiction(config, output_base_dir, equation_image_d
     for i, chap_title in enumerate(chapter_titles):
         summary = chapter_summaries.get(chap_title, "").strip()
         if summary and not summary.startswith("Placeholder summary"):
-            summary_parts.append(f"Chapter {i+1} ('{chap_title}'): {summary}")
+            summary_parts.append(f"Chapter {i + 1} ('{chap_title}'): {summary}")
     if summary_parts:
         summary_context = "Chapter summaries:\n" + "\n\n".join(summary_parts)
         logging.debug(f"Generated summary context:\n{summary_context}")
     else:
-        logging.error(
-            "No valid chapter summaries generated to create summary context."
-        )
+        logging.error("No valid chapter summaries generated to create summary context.")
 
     # --- Generate Overall Summary and Save to Markdown ---
     overall_summary_text = generate_overall_summary(config, book_title, summary_context)
@@ -445,7 +462,7 @@ def run_generation_process_non_fiction(config, output_base_dir, equation_image_d
     is_fiction_book = generation_params.get("is_fiction", False)
 
     for i, chap_title in enumerate(chapter_titles):
-        logging.info(f"--- Processing Chapter {i+1}: {chap_title} ---")
+        logging.info(f"--- Processing Chapter {i + 1}: {chap_title} ---")
         chapter_summary = chapter_summaries.get(
             chap_title, f"Placeholder summary for chapter '{chap_title}'."
         )
@@ -499,7 +516,7 @@ def run_generation_process_non_fiction(config, output_base_dir, equation_image_d
                 continue
             else:
                 formatted_sections = "\n".join(
-                    f"  {j+1}. {title}" for j, title in enumerate(section_titles)
+                    f"  {j + 1}. {title}" for j, title in enumerate(section_titles)
                 )
                 logging.info(
                     f"Generated {len(section_titles)} section titles for chapter '{chap_title}':\n{formatted_sections}"
@@ -562,9 +579,7 @@ def run_generation_process():
         llama_cpp_settings = api_settings.get(
             "llama_cpp", config.get("llama_cpp_settings", {})
         )
-        llama_cpp_base_url = llama_cpp_settings.get(
-            "base_url", "http://localhost:8080"
-        )
+        llama_cpp_base_url = llama_cpp_settings.get("base_url", "http://localhost:8080")
         try:
             logging.info(
                 f"llama.cpp API provider selected. Attempting to connect to: {llama_cpp_base_url}"
@@ -640,7 +655,9 @@ def run_generation_process():
     topic_dir_name = f"{sanitized_topic}_{topic_hash}"
 
     if api_provider in ("llama_cpp", "llama.cpp"):
-        llama_cpp_conf = api_settings.get("llama_cpp", api_settings.get("llama.cpp", {}))
+        llama_cpp_conf = api_settings.get(
+            "llama_cpp", api_settings.get("llama.cpp", {})
+        )
         model_name_for_cache = llama_cpp_conf.get("model") or "llama_cpp_default_model"
     else:
         model_name_for_cache = "unknown_api_provider_model"
@@ -651,9 +668,7 @@ def run_generation_process():
         pathlib.Path(base_cache_dir_from_config) / sanitized_model_name / topic_dir_name
     )
     logging.info(f"Topic-specific cache directory set to: {topic_specific_cache_dir}")
-    config["cache_dir"] = str(
-        topic_specific_cache_dir
-    )
+    config["cache_dir"] = str(topic_specific_cache_dir)
     topic_specific_cache_dir.mkdir(parents=True, exist_ok=True)
 
     base_scratchpad_dir_from_config = (
@@ -663,10 +678,14 @@ def run_generation_process():
         or "scratchpad"
     )
     topic_specific_scratchpad_dir = (
-        pathlib.Path(base_scratchpad_dir_from_config) / sanitized_model_name / topic_dir_name
+        pathlib.Path(base_scratchpad_dir_from_config)
+        / sanitized_model_name
+        / topic_dir_name
     )
     topic_specific_scratchpad_dir.mkdir(parents=True, exist_ok=True)
-    logging.info(f"Topic-specific scratchpad directory set to: {topic_specific_scratchpad_dir}")
+    logging.info(
+        f"Topic-specific scratchpad directory set to: {topic_specific_scratchpad_dir}"
+    )
     config["scratchpad_dir"] = str(topic_specific_scratchpad_dir)
     config["scratchpad_dir_resolved"] = topic_specific_scratchpad_dir
 
@@ -788,24 +807,18 @@ def run_generation_process():
         generated_tone = generate_writing_tone(config, is_fiction=is_fiction)
         if generated_tone:
             writing_tone = generated_tone
-            generation_params["writing_tone"] = (
-                generated_tone
-            )
+            generation_params["writing_tone"] = generated_tone
             logging.info(f"Auto-generated writing tone: '{writing_tone}'")
         else:
             writing_tone = DEFAULT_WRITING_TONE
-            generation_params["writing_tone"] = (
-                writing_tone
-            )
+            generation_params["writing_tone"] = writing_tone
             logging.error(
                 f"Failed to auto-generate writing tone. Using default: '{writing_tone}'"
             )
     else:
         logging.info(f"Using writing_tone from config: '{writing_tone}'")
 
-    if (
-        not writing_tone
-    ):
+    if not writing_tone:
         writing_tone = DEFAULT_WRITING_TONE
         generation_params["writing_tone"] = writing_tone
         logging.error(
@@ -826,9 +839,7 @@ def run_generation_process():
         logging.info(f"Successfully auto-generated Book Title: {book_title}")
         generation_params["book_title"] = book_title
 
-    is_book_non_fiction(
-        config, book_title
-    )
+    is_book_non_fiction(config, book_title)
 
     if generation_params.get("is_fiction", False):
         logging.info(

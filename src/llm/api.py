@@ -11,7 +11,7 @@ import requests
 from dotenv import load_dotenv
 from transformers import AutoTokenizer
 
-from book_generator.utils import sanitize_filename
+from src.utils import sanitize_filename
 
 
 def setup_environment():
@@ -76,6 +76,7 @@ def save_to_cache(prompt_text, response_text, cache_dir, cache_prefix=None):
 
 
 # --- LLM API Interaction ---
+
 
 def _clean_response_text(text, strip_thinking=True):
     """
@@ -147,12 +148,12 @@ class StreamThoughtParser:
                         self._current_end_tag = "</think>"
                     else:
                         self._current_end_tag = "<channel|>"
-                    text = text[m.end():]
+                    text = text[m.end() :]
                 else:
                     match = re.search(r"(<[a-zA-Z0-9_|/-]*)$", text)
                     if match and len(match.group(1)) <= 25:
-                        before = text[:match.start()]
-                        self.pending_tag = text[match.start():]
+                        before = text[: match.start()]
+                        self.pending_tag = text[match.start() :]
                         if before:
                             results.append((False, before))
                         break
@@ -163,7 +164,9 @@ class StreamThoughtParser:
                 end_pattern = (
                     r"(</think>|<\|?channel\|?>)"
                     if not self._current_end_tag
-                    else (re.escape(self._current_end_tag) + r"|</think>|<\|?channel\|?>")
+                    else (
+                        re.escape(self._current_end_tag) + r"|</think>|<\|?channel\|?>"
+                    )
                 )
                 m = re.search(end_pattern, text, re.IGNORECASE)
                 if m:
@@ -173,12 +176,12 @@ class StreamThoughtParser:
                         results.append((True, before))
                     self.in_think_block = False
                     self._current_end_tag = None
-                    text = text[m.end():]
+                    text = text[m.end() :]
                 else:
                     match = re.search(r"(<[a-zA-Z0-9_|/-]*)$", text)
                     if match and len(match.group(1)) <= 25:
-                        before = text[:match.start()]
-                        self.pending_tag = text[match.start():]
+                        before = text[: match.start()]
+                        self.pending_tag = text[match.start() :]
                         if before:
                             results.append((True, before))
                         break
@@ -225,14 +228,14 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
 
     max_retries = int(llama_cpp_config.get("max_retries", default_max_retries))
     retry_delay = int(llama_cpp_config.get("retry_delay_seconds", default_retry_delay))
-    request_timeout = int(
-        llama_cpp_config.get("request_timeout_seconds", 120)
-    )
+    request_timeout = int(llama_cpp_config.get("request_timeout_seconds", 120))
 
     endpoint = llama_cpp_config.get("endpoint")
     if endpoint:
         api_url = f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
-    elif base_url.rstrip("/").endswith("/chat/completions") or base_url.rstrip("/").endswith("/completion"):
+    elif base_url.rstrip("/").endswith("/chat/completions") or base_url.rstrip(
+        "/"
+    ).endswith("/completion"):
         api_url = base_url
     elif base_url.rstrip("/").endswith("/v1"):
         api_url = f"{base_url.rstrip('/')}/chat/completions"
@@ -351,7 +354,9 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
             response.raise_for_status()
 
             if stream_llama_cpp:
-                logging.info(f"Streaming llama.cpp response for model '{model_display}':")
+                logging.info(
+                    f"Streaming llama.cpp response for model '{model_display}':"
+                )
                 full_response_text_parts = []
                 full_reasoning_parts = []
                 thought_parser = StreamThoughtParser()
@@ -378,14 +383,14 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                                 logging.error(
                                     f"llama.cpp API error during stream for model '{model_display}': {chunk['error']}"
                                 )
-                                print(f"\n--- End llama.cpp Stream (Error) ---")
+                                print("\n--- End llama.cpp Stream (Error) ---")
                                 return None
 
                             # 1. Process separate reasoning fields (OpenAI reasoning_content or llama.cpp thinking)
                             reasoning_part = ""
                             if "thinking" in chunk:
                                 reasoning_part = chunk.get("thinking", "")
-                            elif "choices" in chunk and chunk["choices"]:
+                            elif chunk.get("choices"):
                                 choice = chunk["choices"][0]
                                 if "delta" in choice:
                                     reasoning_part = (
@@ -405,17 +410,21 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                             raw_content_part = ""
                             if "content" in chunk:
                                 raw_content_part = chunk.get("content", "")
-                            elif "choices" in chunk and chunk["choices"]:
+                            elif chunk.get("choices"):
                                 choice = chunk["choices"][0]
                                 if "text" in choice:
                                     raw_content_part = choice.get("text", "")
                                 elif "delta" in choice and "content" in choice["delta"]:
-                                    raw_content_part = choice["delta"].get("content") or ""
+                                    raw_content_part = (
+                                        choice["delta"].get("content") or ""
+                                    )
                             elif "response" in chunk:
                                 raw_content_part = chunk.get("response", "")
 
                             if raw_content_part:
-                                segments = thought_parser.process_chunk(raw_content_part)
+                                segments = thought_parser.process_chunk(
+                                    raw_content_part
+                                )
                                 for is_thinking, segment in segments:
                                     if is_thinking:
                                         full_reasoning_parts.append(segment)
@@ -442,24 +451,30 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                                     else:
                                         full_response_text_parts.append(segment)
 
-                                print(f"\n--- End llama.cpp Stream (Done) ---")
+                                print("\n--- End llama.cpp Stream (Done) ---")
                                 logging.info(
                                     f"llama.cpp API stream completed for model '{model_display}'."
                                 )
-                                full_reasoning_text = "".join(full_reasoning_parts).strip()
+                                full_reasoning_text = "".join(
+                                    full_reasoning_parts
+                                ).strip()
                                 if full_reasoning_text:
                                     logging.info(
                                         f"llama.cpp API reasoning process captured ({len(full_reasoning_text)} chars)."
                                     )
-                                    logging.debug(f"Reasoning text:\n{full_reasoning_text}")
+                                    logging.debug(
+                                        f"Reasoning text:\n{full_reasoning_text}"
+                                    )
 
                                 final_text = "".join(full_response_text_parts)
-                                return _clean_response_text(final_text, strip_thinking=True)
+                                return _clean_response_text(
+                                    final_text, strip_thinking=True
+                                )
                         except json.JSONDecodeError:
                             logging.error(
                                 f"Error decoding JSON chunk from llama.cpp stream: {decoded_line}"
                             )
-                            print(f"\n--- End llama.cpp Stream (JSON Error) ---")
+                            print("\n--- End llama.cpp Stream (JSON Error) ---")
                             return None
 
                 for is_thinking, segment in thought_parser.finalize():
@@ -468,7 +483,7 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                     else:
                         full_response_text_parts.append(segment)
 
-                print(f"\n--- End llama.cpp Stream (Done) ---")
+                print("\n--- End llama.cpp Stream (Done) ---")
                 full_reasoning_text = "".join(full_reasoning_parts).strip()
                 if full_reasoning_text:
                     logging.info(
@@ -493,7 +508,7 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                 response_text = None
                 if "content" in response_data:
                     response_text = response_data["content"]
-                elif "choices" in response_data and response_data["choices"]:
+                elif response_data.get("choices"):
                     choice = response_data["choices"][0]
                     if "text" in choice:
                         response_text = choice.get("text")
@@ -503,13 +518,12 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                     response_text = response_data["response"]
 
                 reasoning_text = None
-                if "choices" in response_data and response_data["choices"]:
+                if response_data.get("choices"):
                     choice = response_data["choices"][0]
                     if "message" in choice:
-                        reasoning_text = (
-                            choice["message"].get("reasoning_content")
-                            or choice["message"].get("reasoning")
-                        )
+                        reasoning_text = choice["message"].get(
+                            "reasoning_content"
+                        ) or choice["message"].get("reasoning")
                 elif "thinking" in response_data:
                     reasoning_text = response_data.get("thinking")
 
@@ -561,9 +575,7 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                 f"llama.cpp API call for model '{model_display}' failed after {max_retries} attempts."
             )
             if api_settings_conf.get("terminate_on_api_failure", False):
-                logging.critical(
-                    "Terminating program due to repeated API failures."
-                )
+                logging.critical("Terminating program due to repeated API failures.")
                 sys.exit(1)
             return None
     return None

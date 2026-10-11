@@ -1,11 +1,14 @@
 import sys
+
 import yaml
 
 CONFIG_FILE_PATH = "config.yaml"
 
+
 def get_config_path():
     """Returns the path to the configuration file."""
     return CONFIG_FILE_PATH
+
 
 def load_config(config_path=CONFIG_FILE_PATH):
     """Loads the configuration file."""

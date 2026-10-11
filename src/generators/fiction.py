@@ -1,19 +1,23 @@
 """
 This file contains the functions for generating fiction content.
 """
+
 import logging
 import re
-import sys
 
-from book_generator.llm_api import call_llm_api
-from book_generator.utils import sanitize_filename
+from src.llm import call_llm_api
+from src.utils import sanitize_filename
 
 
 def generate_overall_story(config, writing_tone=""):
     """Generates the overall story for a fiction book."""
     logging.info("Generating overall story...")
-    main_topic = config.get("generation_params", {}).get("main_topic", "[No Main Topic Provided]")
-    setting = config.get("generation_params", {}).get("setting", "[No Setting Provided]")
+    main_topic = config.get("generation_params", {}).get(
+        "main_topic", "[No Main Topic Provided]"
+    )
+    setting = config.get("generation_params", {}).get(
+        "setting", "[No Setting Provided]"
+    )
 
     prompt = f"""
 Based on the main topic '{main_topic}', a setting described as:
@@ -41,7 +45,14 @@ Output in British English.
         return None
 
 
-def generate_fiction_chapter_outline(config, overall_story, character_context="", location_context="", fiction_chapter_count=20, writing_tone=""):
+def generate_fiction_chapter_outline(
+    config,
+    overall_story,
+    character_context="",
+    location_context="",
+    fiction_chapter_count=20,
+    writing_tone="",
+):
     """Generates a list of chapter titles and summaries for a fiction book."""
     logging.info("Generating fiction chapter outline (titles and summaries)...")
     prompt = f"""
@@ -85,7 +96,9 @@ Output in British English.
             logging.info(f"Successfully generated {len(chapters)} chapter outlines.")
             return chapters
         else:
-            logging.error(f"Could not parse chapter outline from API response: {outline_text}")
+            logging.error(
+                f"Could not parse chapter outline from API response: {outline_text}"
+            )
             return None
     else:
         logging.error("Failed to generate fiction chapter outline via API.")
@@ -249,7 +262,9 @@ def generate_location_list(config, overall_story):
     logging.info("Attempting to generate location list...")
 
     if not overall_story:
-        logging.error("Cannot generate location list: 'overall_story' is missing. Skipping.")
+        logging.error(
+            "Cannot generate location list: 'overall_story' is missing. Skipping."
+        )
         return None
 
     prompt = f"""
@@ -367,9 +382,7 @@ Output in British English.
                     locations.append({"name": name, "description": description})
 
         if locations:
-            logging.info(
-                f"Successfully updated and parsed {len(locations)} locations."
-            )
+            logging.info(f"Successfully updated and parsed {len(locations)} locations.")
             return locations
         else:
             logging.error(
@@ -397,9 +410,7 @@ The summary should capture the key events, character developments, and plot adva
 Output only the summary paragraph. Do not add any introductory text.
 Output in British English.
 """
-    cache_prefix = (
-        f"fiction_summary_{sanitize_filename(chapter_title, max_length=40)}"
-    )
+    cache_prefix = f"fiction_summary_{sanitize_filename(chapter_title, max_length=40)}"
     summary = call_llm_api(prompt, config, cache_prefix=cache_prefix)
 
     if summary:

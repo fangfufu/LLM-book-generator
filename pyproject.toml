@@ -44,7 +44,7 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = [
-  "book_generator",
+  "src",
 ]
 
 [tool.pytest.ini_options]
@@ -56,7 +56,7 @@ venvPath = "."
 venv = ".venv"
 typeCheckingMode = "basic"
 include = [
-  "book_generator",
+  "src",
   "gui.py",
   "main.py",
 ]
@@ -74,13 +74,16 @@ reportIncompatibleMethodOverride = "none"
 target-version = "py312"
 line-length = 88
 
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
 [tool.mypy]
 mypy_path = "."
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
-  "book_generator.*",
+  "src.*",
   "gui",
   "main",
   "tests.*",
@@ -96,6 +99,6 @@ disable_error_code = ["var-annotated", "union-attr", "return-value"]
 
 [tool.vulture]
 paths = [
-  "book_generator",
+  "src",
 ]
 min_confidence = 80

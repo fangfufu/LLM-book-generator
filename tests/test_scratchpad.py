@@ -1,16 +1,15 @@
 import pathlib
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from book_generator.fiction_generator import (
+from src.generators.fiction import (
     generate_fiction_chapter_pass1,
     generate_fiction_chapter_pass2,
 )
-from book_generator.scratchpad import (
+from src.generators.scratchpad import (
     detect_relevant_entities,
     get_character_dir,
-    get_chapters_dir,
     get_location_dir,
     get_scratchpad_dir,
     has_initialized_scratchpad,
@@ -64,7 +63,10 @@ class TestScratchpad(unittest.TestCase):
         ]
         locations = [
             {"name": "Whitehall Bunker", "description": "Secret command center."},
-            {"name": "Vauxhall Cross", "description": "MI6 Headquarters on the Thames."},
+            {
+                "name": "Vauxhall Cross",
+                "description": "MI6 Headquarters on the Thames.",
+            },
         ]
 
         init_scratchpad(scratchpad_dir, characters, locations)
@@ -112,14 +114,24 @@ class TestScratchpad(unittest.TestCase):
         ]
         locations = [
             {"name": "Whitehall Bunker", "description": "Secret command center."},
-            {"name": "Vauxhall Cross", "description": "MI6 Headquarters on the Thames."},
-            {"name": "Berlin Safehouse", "description": "Covert apartment in Kreuzberg."},
+            {
+                "name": "Vauxhall Cross",
+                "description": "MI6 Headquarters on the Thames.",
+            },
+            {
+                "name": "Berlin Safehouse",
+                "description": "Covert apartment in Kreuzberg.",
+            },
         ]
         init_scratchpad(scratchpad_dir, characters, locations)
 
         chapter_title = "The Breach at Whitehall"
-        chapter_summary = "Elena enters the Whitehall Bunker to retrieve classified cipher files."
-        chapter_draft = "Elena crept quietly down the reinforced corridor of the Whitehall Bunker."
+        chapter_summary = (
+            "Elena enters the Whitehall Bunker to retrieve classified cipher files."
+        )
+        chapter_draft = (
+            "Elena crept quietly down the reinforced corridor of the Whitehall Bunker."
+        )
 
         detected_chars, detected_locs = detect_relevant_entities(
             scratchpad_dir, chapter_title, chapter_summary, chapter_draft
@@ -135,7 +147,9 @@ class TestScratchpad(unittest.TestCase):
         scratchpad_dir.mkdir(parents=True, exist_ok=True)
 
         characters = [{"name": "Elena Vance", "description": "Undercover field agent."}]
-        locations = [{"name": "Whitehall Bunker", "description": "Secret command center."}]
+        locations = [
+            {"name": "Whitehall Bunker", "description": "Secret command center."}
+        ]
         init_scratchpad(scratchpad_dir, characters, locations)
 
         char_notes = load_specific_character_notes(scratchpad_dir, ["Elena Vance"])
@@ -154,12 +168,26 @@ class TestScratchpad(unittest.TestCase):
         self.assertIsNone(load_chapter_from_scratchpad(scratchpad_dir, 1))
 
         # Save Pass 1
-        save_chapter_pass(scratchpad_dir, 1, "The Beginning", pass_number=1, content="Draft pass 1 text.")
+        save_chapter_pass(
+            scratchpad_dir,
+            1,
+            "The Beginning",
+            pass_number=1,
+            content="Draft pass 1 text.",
+        )
         self.assertIsNone(load_chapter_from_scratchpad(scratchpad_dir, 1))
 
         # Save Pass 2 & Summary
-        save_chapter_pass(scratchpad_dir, 1, "The Beginning", pass_number=2, content="Enriched pass 2 text.")
-        save_chapter_summary(scratchpad_dir, 1, "The Beginning", summary="Summary of the beginning.")
+        save_chapter_pass(
+            scratchpad_dir,
+            1,
+            "The Beginning",
+            pass_number=2,
+            content="Enriched pass 2 text.",
+        )
+        save_chapter_summary(
+            scratchpad_dir, 1, "The Beginning", summary="Summary of the beginning."
+        )
 
         # Now load_chapter_from_scratchpad should find completed chapter
         loaded = load_chapter_from_scratchpad(scratchpad_dir, 1)
@@ -167,13 +195,15 @@ class TestScratchpad(unittest.TestCase):
         self.assertEqual(loaded["content"], "Enriched pass 2 text.")
         self.assertEqual(loaded["summary"], "Summary of the beginning.")
 
-    @patch("book_generator.scratchpad.call_llm_api")
+    @patch("src.generators.scratchpad.call_llm_api")
     def test_update_scratchpad_entities(self, mock_llm):
         scratchpad_dir = self.base_scratchpad / "test_updates"
         scratchpad_dir.mkdir(parents=True, exist_ok=True)
 
         characters = [{"name": "Elena Vance", "description": "Undercover field agent."}]
-        locations = [{"name": "Whitehall Bunker", "description": "Secret command center."}]
+        locations = [
+            {"name": "Whitehall Bunker", "description": "Secret command center."}
+        ]
         init_scratchpad(scratchpad_dir, characters, locations)
 
         mock_llm.return_value = """--- CHARACTERS UPDATE ---
@@ -218,9 +248,12 @@ class TestScratchpad(unittest.TestCase):
         char_summary = (char_dir / "summary.md").read_text(encoding="utf-8")
         self.assertIn("Arthur Pendelton", char_summary)
 
-    @patch("book_generator.fiction_generator.call_llm_api")
+    @patch("src.generators.fiction.call_llm_api")
     def test_two_pass_fiction_generation(self, mock_llm):
-        mock_llm.side_effect = ["Pass 1 Chapter Draft", "Pass 2 Enriched Chapter Content"]
+        mock_llm.side_effect = [
+            "Pass 1 Chapter Draft",
+            "Pass 2 Enriched Chapter Content",
+        ]
 
         config = {"cache_dir": str(self.base_scratchpad)}
 
@@ -257,21 +290,21 @@ class TestScratchpad(unittest.TestCase):
         self.assertIn("titanium watch", prompt_arg)
         self.assertIn("heavy smog", prompt_arg)
 
-    @patch("book_generator.orchestrator.assemble_marketing_docx")
-    @patch("book_generator.orchestrator.assemble_docx")
-    @patch("book_generator.orchestrator.generate_book_blurb")
-    @patch("book_generator.orchestrator.generate_back_matter")
-    @patch("book_generator.orchestrator.generate_front_matter")
-    @patch("book_generator.orchestrator.save_summary_to_markdown")
-    @patch("book_generator.orchestrator.generate_overall_summary")
-    @patch("book_generator.orchestrator.update_scratchpad_entities")
-    @patch("book_generator.orchestrator.summarize_fiction_chapter")
-    @patch("book_generator.orchestrator.generate_fiction_chapter_pass2")
-    @patch("book_generator.orchestrator.generate_fiction_chapter_pass1")
-    @patch("book_generator.orchestrator.generate_fiction_chapter_outline")
-    @patch("book_generator.orchestrator.generate_location_list")
-    @patch("book_generator.orchestrator.generate_character_list")
-    @patch("book_generator.orchestrator.generate_overall_story")
+    @patch("src.orchestrator.assemble_marketing_docx")
+    @patch("src.orchestrator.assemble_docx")
+    @patch("src.orchestrator.generate_book_blurb")
+    @patch("src.orchestrator.generate_back_matter")
+    @patch("src.orchestrator.generate_front_matter")
+    @patch("src.orchestrator.save_summary_to_markdown")
+    @patch("src.orchestrator.generate_overall_summary")
+    @patch("src.orchestrator.update_scratchpad_entities")
+    @patch("src.orchestrator.summarize_fiction_chapter")
+    @patch("src.orchestrator.generate_fiction_chapter_pass2")
+    @patch("src.orchestrator.generate_fiction_chapter_pass1")
+    @patch("src.orchestrator.generate_fiction_chapter_outline")
+    @patch("src.orchestrator.generate_location_list")
+    @patch("src.orchestrator.generate_character_list")
+    @patch("src.orchestrator.generate_overall_story")
     def test_orchestrator_fiction_resumption(
         self,
         mock_story,
@@ -290,7 +323,7 @@ class TestScratchpad(unittest.TestCase):
         mock_assemble_docx,
         mock_assemble_marketing,
     ):
-        from book_generator.orchestrator import run_generation_process_fiction
+        from src.orchestrator import run_generation_process_fiction
 
         scratchpad_dir = self.base_scratchpad / "test_orch_resume"
         scratchpad_dir.mkdir(parents=True, exist_ok=True)
@@ -318,7 +351,9 @@ class TestScratchpad(unittest.TestCase):
         mock_summary.return_value = "Generated new summary"
 
         # First run: should generate chapter 1 and chapter 2
-        run_generation_process_fiction(config, self.base_scratchpad, self.base_scratchpad)
+        run_generation_process_fiction(
+            config, self.base_scratchpad, self.base_scratchpad
+        )
 
         self.assertEqual(mock_pass1.call_count, 2)
         self.assertEqual(mock_pass2.call_count, 2)
@@ -335,7 +370,9 @@ class TestScratchpad(unittest.TestCase):
         # Second run (simulating restarting after interruption / completion):
         # Chapters are already completed in scratchpad -> pass1 and pass2 should NOT be called!
         # Character and location lists should be loaded from scratchpad without calling generation APIs!
-        run_generation_process_fiction(config, self.base_scratchpad, self.base_scratchpad)
+        run_generation_process_fiction(
+            config, self.base_scratchpad, self.base_scratchpad
+        )
 
         self.assertEqual(mock_pass1.call_count, 0)
         self.assertEqual(mock_pass2.call_count, 0)

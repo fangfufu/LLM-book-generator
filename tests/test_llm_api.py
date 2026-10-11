@@ -1,18 +1,18 @@
-import json
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import requests
-from book_generator.llm_api import (
-    call_llm_api,
+
+from src.llm.api import (
     _call_llama_cpp_api_internal,
+    call_llm_api,
 )
 
 
 class TestLlmApi(unittest.TestCase):
-    @patch("book_generator.llm_api.save_to_cache")
-    @patch("book_generator.llm_api.load_from_cache")
-    @patch("book_generator.llm_api._call_llama_cpp_api_internal")
+    @patch("src.llm.api.save_to_cache")
+    @patch("src.llm.api.load_from_cache")
+    @patch("src.llm.api._call_llama_cpp_api_internal")
     def test_call_llm_api(
         self,
         mock_call_llama_cpp,
@@ -31,7 +31,9 @@ class TestLlmApi(unittest.TestCase):
 
         self.assertEqual(result, "successful response")
         self.assertEqual(mock_call_llama_cpp.call_count, 1)
-        mock_save_to_cache.assert_called_once_with(prompt, "successful response", "api_cache", None)
+        mock_save_to_cache.assert_called_once_with(
+            prompt, "successful response", "api_cache", None
+        )
 
     @patch("requests.post")
     def test_llama_cpp_non_streaming_native_completion_endpoint(self, mock_post):
@@ -102,7 +104,10 @@ class TestLlmApi(unittest.TestCase):
         completion_call = mock_post.call_args_list[1]
         args, kwargs = completion_call
         self.assertEqual(args[0], "http://localhost:8080/v1/chat/completions")
-        self.assertEqual(kwargs["json"]["messages"], [{"role": "user", "content": "Write a chapter."}])
+        self.assertEqual(
+            kwargs["json"]["messages"],
+            [{"role": "user", "content": "Write a chapter."}],
+        )
         self.assertEqual(kwargs["json"]["model"], "llama-3")
         self.assertEqual(kwargs["json"]["temperature"], 0.7)
         self.assertFalse(kwargs["stream"])
@@ -222,10 +227,14 @@ class TestLlmApi(unittest.TestCase):
         completion_call = mock_post.call_args_list[1]
         _, kwargs = completion_call
         self.assertEqual(kwargs["json"]["reasoning_budget"], 0)
-        self.assertEqual(kwargs["json"]["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertEqual(
+            kwargs["json"]["chat_template_kwargs"], {"enable_thinking": False}
+        )
 
     @patch("requests.post")
-    def test_llama_cpp_streaming_disable_reasoning_strips_thinking_tags(self, mock_post):
+    def test_llama_cpp_streaming_disable_reasoning_strips_thinking_tags(
+        self, mock_post
+    ):
         mock_tokenize_resp = MagicMock()
         mock_tokenize_resp.status_code = 200
         mock_tokenize_resp.json.return_value = {"tokens": [1]}
@@ -250,7 +259,6 @@ class TestLlmApi(unittest.TestCase):
 
         result = _call_llama_cpp_api_internal("Generate", config)
         self.assertEqual(result, "Actual output")
-
 
     @patch("requests.post")
     def test_llama_cpp_enabled_reasoning_strips_thinking_tags(self, mock_post):
@@ -323,12 +331,14 @@ class TestLlmApi(unittest.TestCase):
         mock_completion_resp = MagicMock()
         mock_completion_resp.status_code = 200
         mock_completion_resp.json.return_value = {
-            "choices": [{
-                "message": {
-                    "content": "<think>Internal thought</think>Chapter text.",
-                    "reasoning_content": "Model thought process here",
+            "choices": [
+                {
+                    "message": {
+                        "content": "<think>Internal thought</think>Chapter text.",
+                        "reasoning_content": "Model thought process here",
+                    }
                 }
-            }]
+            ]
         }
         mock_post.side_effect = [mock_tokenize_resp, mock_completion_resp]
 
@@ -429,4 +439,3 @@ class TestLlmApi(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

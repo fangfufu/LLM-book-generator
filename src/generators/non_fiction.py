@@ -1,12 +1,12 @@
 """
 This file contains the functions for generating non-fiction content.
 """
+
 import logging
 import re
-import sys
 
-from book_generator.llm_api import call_llm_api
-from book_generator.utils import sanitize_filename
+from src.llm import call_llm_api
+from src.utils import sanitize_filename
 
 
 def generate_chapter_outline(config, character_context=""):
@@ -14,7 +14,9 @@ def generate_chapter_outline(config, character_context=""):
     logging.info("Generating chapter outline...")
     is_fiction = config.get("generation_params", {}).get("is_fiction", False)
     if is_fiction:
-        logging.info("Book is fiction, skipping non-fiction chapter outline generation.")
+        logging.info(
+            "Book is fiction, skipping non-fiction chapter outline generation."
+        )
         return []
 
     length_modifier = (
@@ -23,13 +25,13 @@ def generate_chapter_outline(config, character_context=""):
     is_fiction = config.get("generation_params", {}).get("is_fiction", False)
 
     if is_fiction:
-        list_description_for_prompt = f"list"
+        list_description_for_prompt = "list"
     else:
         list_description_for_prompt = f"{length_modifier} short list"
 
     prompt = f"""Generate a {list_description_for_prompt} of chapter titles for a
-book about '{config['generation_params']['main_topic']}'. The setting of the book
-is described as: {config['generation_params']['setting']}.
+book about '{config["generation_params"]["main_topic"]}'. The setting of the book
+is described as: {config["generation_params"]["setting"]}.
 {character_context}
 The chapters should logically progress through the topic, potentially involving the characters.
 Ensure the list of chapter titles is appropriate for the type of book (fiction/non-fiction).
@@ -57,7 +59,7 @@ Output in British English."""
     else:
         logging.error("Failed to generate chapter outline via API. Using fallback.")
         return [
-            f"Chapter {i+1}: Placeholder Title"
+            f"Chapter {i + 1}: Placeholder Title"
             for i in range(config["generation_params"]["num_chapters_fallback"])
         ]
 
@@ -81,7 +83,7 @@ def generate_section_titles(
     # --- Prepare Context for Prompt ---
     # Format all chapter titles
     all_titles_context = "\n".join(
-        f"- {idx+1}. {title}" for idx, title in enumerate(all_chapter_titles)
+        f"- {idx + 1}. {title}" for idx, title in enumerate(all_chapter_titles)
     )
 
     # Format all chapter summaries (excluding the current one for brevity,
@@ -100,8 +102,8 @@ def generate_section_titles(
 
     prompt = f"""
 Context for the entire book:
-Main Topic: '{config['generation_params']['main_topic']}'
-Setting: {config['generation_params']['setting']}
+Main Topic: '{config["generation_params"]["main_topic"]}'
+Setting: {config["generation_params"]["setting"]}
 {character_context}
 
 Full Chapter Outline:
@@ -160,14 +162,15 @@ not contain subtitles.
                 f"Could not parse section titles for '{chapter_title}' from API response or response was empty. Using placeholders. Response:\n{titles_text}"
             )
             return [
-                f"Section {i+1}: Placeholder Title" for i in range(num_chapter_fallback)
+                f"Section {i + 1}: Placeholder Title"
+                for i in range(num_chapter_fallback)
             ]
     else:
         logging.error(
             f"Failed to generate section titles for '{chapter_title}' via API. Using placeholders."
         )
         return [
-            f"Section {i+1}: Placeholder Title" for i in range(num_chapter_fallback)
+            f"Section {i + 1}: Placeholder Title" for i in range(num_chapter_fallback)
         ]
 
 
@@ -189,8 +192,8 @@ def generate_section_content(
 
     prompt = f"""
 Context:
-- Book Main Topic: '{config['generation_params']['main_topic']}'
-- Setting: {config['generation_params']['setting']}
+- Book Main Topic: '{config["generation_params"]["main_topic"]}'
+- Setting: {config["generation_params"]["setting"]}
 {"-" if character_context else ""}{character_context}
 
 ---

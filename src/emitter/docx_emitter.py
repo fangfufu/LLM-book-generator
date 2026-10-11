@@ -1,10 +1,7 @@
-import hashlib
 import logging
 import pathlib
 import re
-import time
 
-import markdown
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.style import WD_STYLE_TYPE
@@ -15,12 +12,14 @@ from docx.shared import Inches, Mm, Pt
 from lxml import html
 from PIL import Image
 
-from book_generator.constants import (
+from src.constants import (
     DEFAULT_DISPLAY_MATH_HEIGHT_INCHES,
     DEFAULT_INLINE_MATH_HEIGHT_MULTIPLIER,
     DEFAULT_WRITING_TONE,
 )
-from book_generator.utils import render_latex_to_image, sanitize_filename
+from src.processor import process_markdown_to_html
+from src.utils import render_latex_to_image, sanitize_filename
+
 
 # Helper function to apply formatting to a run
 def apply_formatting(run, bold=False, italic=False):
@@ -408,7 +407,7 @@ def add_paragraph_from_html_node(
     # --- Handle Paragraphs (<p>) ---
     elif node.tag == "p":
         # ... (implementation unchanged, including display math span detection) ...
-        logging.debug(f"Processing <p> node.")
+        logging.debug("Processing <p> node.")
         children = list(node)
         # Check if <p> *only* contains a display math span (common Arithmatex output)
         if (
@@ -588,7 +587,6 @@ def add_paragraph_from_html_node(
 
         # Create the paragraph for this list item's text/inline content
         # Check if the first child is a <p> tag (common markdown output)
-        first_child_is_p = False
         direct_children = [child for child in node if isinstance(child.tag, str)]
         if (
             direct_children
@@ -873,6 +871,33 @@ def add_paragraph_from_html_node(
         is_handled = True
 
 
+def html_to_docx(
+    html_tree_or_content,
+    container_obj,
+    doc,
+    config,
+    usable_width_inches,
+    equation_image_dir,
+):
+    """Converts HTML elements into DOCX elements in the container."""
+    if isinstance(html_tree_or_content, str):
+        from src.processor import clean_html_tree
+
+        html_tree_root = clean_html_tree(html_tree_or_content)
+    else:
+        html_tree_root = html_tree_or_content
+
+    for element in html_tree_root:
+        add_paragraph_from_html_node(
+            element,
+            container_obj,
+            doc,
+            config,
+            usable_width_inches,
+            equation_image_dir,
+        )
+
+
 def markdown_to_docx(
     markdown_text,
     container_obj,
@@ -882,163 +907,27 @@ def markdown_to_docx(
     equation_image_dir,
     context_label=None,
 ):
-    """Converts Markdown to DOCX elements, using Arithmatex for LaTeX,
-    and cleans up excessive line breaks. Handles nested lists."""
-    # ... (keep markdown cleaning and HTML conversion as is) ...
+    """Converts Markdown to DOCX elements using the processor and HTML emitter."""
     if not markdown_text:
         logging.debug("Markdown text is empty, skipping conversion.")
         return
 
     logging.debug("Starting Markdown to DOCX conversion (using Arithmatex)...")
-
-    # --- Pre-processing: Clean up excessive newlines ---
-    cleaned_markdown = re.sub(r"\n{3,}", "\n\n", markdown_text.strip())
-    if cleaned_markdown != markdown_text.strip():
-        logging.debug("Cleaned excessive newlines from Markdown content.")
-    # --- End Pre-processing ---
+    cleaned_markdown = markdown_text.strip()
 
     try:
-        # Configure Markdown extensions
-        extensions = [
-            "extra",  # Includes tables, footnotes, abbreviations, etc.
-            "sane_lists",
-            "fenced_code",
-            "pymdownx.arithmatex",  # For LaTeX math $$...$$ and $...$
-            "pymdownx.superfences",  # Improved fenced code blocks
-            "pymdownx.details",
-            "pymdownx.mark",
-        ]
-
-        extension_configs = {"pymdownx.arithmatex": {"generic": True}}
-        md_converter = markdown.Markdown(
-            extensions=extensions, extension_configs=extension_configs
+        cleaned_markdown, _, html_tree_root = process_markdown_to_html(
+            markdown_text, config=config, context_label=context_label
         )
-        html_content = md_converter.convert(cleaned_markdown)
-        logging.debug(f"Generated HTML (first 500 chars): {html_content[:500]}...")
-
-        # --- Save intermediate HTML for debugging ---
-        if config.get("debug_options", {}).get("save_intermediate_html", False):
-            # ... (HTML saving logic unchanged) ...
-            debug_html_dir = (
-                pathlib.Path(config.get("cache_dir", "api_cache")) / "debug_html"
-            )
-            debug_html_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            content_hash = hashlib.sha1(cleaned_markdown.encode("utf-8")).hexdigest()[
-                :8
-            ]
-            if context_label:
-                context_hint = sanitize_filename(context_label, max_length=80)
-            else:
-                context_hint = "unknown_context"
-
-            html_filename = (
-                debug_html_dir
-                / f"md_to_html_{context_hint}_{timestamp}_{content_hash}.html"
-            )
-            try:
-                with open(html_filename, "w", encoding="utf-8") as f_html:
-                    f_html.write(
-                        "<!DOCTYPE html>\n<html>\n<head><meta charset='UTF-8'>"
-                    )
-                    f_html.write(
-                        "<style>.arithmatex { border: 1px dotted blue; padding: 2px; }</style>"
-                    )
-                    f_html.write("</head>\n<body>\n")
-                    f_html.write(html_content)
-                    f_html.write("\n</body>\n</html>")
-                logging.info(f"Saved intermediate HTML to: {html_filename}")
-            except Exception as e_save:
-                logging.error(
-                    f"Could not save intermediate HTML to {html_filename}: {e_save}"
-                )
-        # --- End intermediate HTML saving ---
-
-        # --- HTML Cleaning Step ---
-        parser = html.HTMLParser(encoding="utf-8")
-        # Wrap in a div to ensure a single root for parsing potentially fragmented HTML
-        html_wrapper_str = f"<div>{html_content}</div>"
-        try:
-            # Use utf-8 encoding for parsing
-            html_tree_root = html.fromstring(
-                html_wrapper_str.encode("utf-8"), parser=parser
-            )
-        except UnicodeDecodeError:
-            # Fallback if utf-8 fails (less common but possible)
-            logging.error(
-                "UTF-8 decoding failed for HTML string, trying 'latin-1' fallback."
-            )
-            html_tree_root = html.fromstring(
-                html_wrapper_str.encode("latin-1"), parser=parser
-            )
-
-        # Find <p> tags that are either completely empty or contain only <br> tags and whitespace
-        paragraphs_to_remove = []
-        # Iterate through all <p> tags in the parsed HTML tree
-        for p_tag in html_tree_root.xpath(".//p"):
-            # Get the text content of the <p> tag, stripping leading/trailing whitespace
-            text_content = p_tag.text_content().strip()
-            # Get all direct children elements of the <p> tag
-            children = p_tag.getchildren()
-
-            # Check condition 1: Is the paragraph completely empty (no text, no children)?
-            is_completely_empty = not text_content and not children
-
-            # Check condition 2: Does the paragraph contain ONLY <br> tags (and whitespace)?
-            only_br_children = False
-            if not text_content and children:  # Only check children if there's no text
-                all_children_are_br = True
-                for child in children:
-                    # If any child is not a <br> tag, this condition is false
-                    if child.tag != "br":
-                        all_children_are_br = False
-                        break
-                only_br_children = all_children_are_br  # True if all children were <br>
-
-            # If either condition is met, schedule the paragraph for removal
-            if is_completely_empty or only_br_children:
-                logging.debug(
-                    f"Found <p> tag {'empty' if is_completely_empty else 'containing only <br> tags'}. Scheduling for removal. "
-                    f"HTML snippet: {html.tostring(p_tag, encoding='unicode', pretty_print=False)[:100]}"
-                )
-                paragraphs_to_remove.append(p_tag)
-
-        # Remove the identified paragraphs
-        if paragraphs_to_remove:
-            logging.info(
-                f"Removing {len(paragraphs_to_remove)} empty or <br>-only <p> tags."
-            )
-            for p_tag in paragraphs_to_remove:
-                parent = p_tag.getparent()
-                if parent is not None:
-                    # Preserve tail text if it exists, attaching it to the previous sibling or parent text
-                    if p_tag.tail and p_tag.tail.strip():
-                        previous_sibling = p_tag.getprevious()
-                        if previous_sibling is not None:
-                            # Append tail to the previous sibling's tail
-                            previous_sibling.tail = (
-                                previous_sibling.tail or ""
-                            ) + p_tag.tail
-                        else:
-                            # Append tail to the parent's text if no previous sibling
-                            parent.text = (parent.text or "") + p_tag.tail
-                    # Remove the paragraph tag itself
-                    parent.remove(p_tag)
-        # --- End HTML Cleaning Step ---
-
-        # Process each *remaining* element under the root div
-        for element in html_tree_root:
-            add_paragraph_from_html_node(
-                element,
-                container_obj,
-                doc,
-                config,
-                usable_width_inches,
-                equation_image_dir,
-            )
-
+        html_to_docx(
+            html_tree_root,
+            container_obj,
+            doc,
+            config,
+            usable_width_inches,
+            equation_image_dir,
+        )
     except ImportError as ie:
-        # ... (error handling unchanged) ...
         logging.error(
             f"Markdown extension import error: {ie}. Ensure required libraries (e.g., pymdown-extensions) are installed.",
             exc_info=True,
@@ -1046,7 +935,6 @@ def markdown_to_docx(
         container_obj.add_paragraph(f"[Error: Missing Markdown extension - {ie}]")
         container_obj.add_paragraph(cleaned_markdown)
     except Exception as e:
-        # ... (error handling unchanged) ...
         logging.error(f"Error converting Markdown/HTML to DOCX: {e}", exc_info=True)
         container_obj.add_paragraph(f"[Error processing content: {e}]")
         container_obj.add_paragraph("--- Raw Markdown Fallback ---")
@@ -1196,7 +1084,9 @@ def assemble_docx(
 
     if doc is None:
         doc = Document()
-        logging.info("No valid stylesheet provided. Creating document with default styles.")
+        logging.info(
+            "No valid stylesheet provided. Creating document with default styles."
+        )
 
     # --- Basic Style Setup ---
     # Only run this setup if we are NOT using a pre-defined template
@@ -1237,23 +1127,27 @@ def assemble_docx(
                 title_style.paragraph_format.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
             else:
                 doc.styles["Title"].font.name = font_name
-                doc.styles["Title"].paragraph_format.alignment = (
-                    WD_PARAGRAPH_ALIGNMENT.CENTER
-                )
+                doc.styles[
+                    "Title"
+                ].paragraph_format.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
 
             if "Subtitle" not in doc.styles:
-                subtitle_style = doc.styles.add_style("Subtitle", WD_STYLE_TYPE.PARAGRAPH)
+                subtitle_style = doc.styles.add_style(
+                    "Subtitle", WD_STYLE_TYPE.PARAGRAPH
+                )
                 subtitle_style.base_style = doc.styles["Normal"]
                 subtitle_style.font.name = font_name
                 subtitle_style.font.size = Pt(16)  # Example size
                 subtitle_style.font.italic = True
                 subtitle_style.paragraph_format.space_after = Pt(18)
-                subtitle_style.paragraph_format.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-            else:
-                doc.styles["Subtitle"].font.name = font_name
-                doc.styles["Subtitle"].paragraph_format.alignment = (
+                subtitle_style.paragraph_format.alignment = (
                     WD_PARAGRAPH_ALIGNMENT.CENTER
                 )
+            else:
+                doc.styles["Subtitle"].font.name = font_name
+                doc.styles[
+                    "Subtitle"
+                ].paragraph_format.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
 
             # Ensure List Bullet exists (as before)
             if "List Bullet" not in doc.styles:
@@ -1275,7 +1169,7 @@ def assemble_docx(
             for i in range(2, 5):  # Define List Bullet 2, 3, 4
                 style_name = f"List Bullet {i}"
                 base_style_name = (
-                    f"List Bullet {i-1}" if i > 2 else "List Bullet"
+                    f"List Bullet {i - 1}" if i > 2 else "List Bullet"
                 )  # Base on previous level
                 if style_name not in doc.styles:
                     lb_nested_style = doc.styles.add_style(
@@ -1304,16 +1198,26 @@ def assemble_docx(
                     if lb_nested_style.paragraph_format.left_indent != Inches(
                         indent_inches
                     ):
-                        logging.debug(f"Adjusting indent for existing style '{style_name}'")
-                        lb_nested_style.paragraph_format.left_indent = Inches(indent_inches)
-                        lb_nested_style.paragraph_format.first_line_indent = Inches(-0.25)
+                        logging.debug(
+                            f"Adjusting indent for existing style '{style_name}'"
+                        )
+                        lb_nested_style.paragraph_format.left_indent = Inches(
+                            indent_inches
+                        )
+                        lb_nested_style.paragraph_format.first_line_indent = Inches(
+                            -0.25
+                        )
 
             # --- Define Code Block Style ---
             code_style_name = "CodeBlock"
             if code_style_name not in doc.styles:
-                code_style = doc.styles.add_style(code_style_name, WD_STYLE_TYPE.PARAGRAPH)
+                code_style = doc.styles.add_style(
+                    code_style_name, WD_STYLE_TYPE.PARAGRAPH
+                )
                 # Base on 'No Spacing' if it exists for minimal vertical space, else 'Normal'
-                base_style_name = "No Spacing" if "No Spacing" in doc.styles else "Normal"
+                base_style_name = (
+                    "No Spacing" if "No Spacing" in doc.styles else "Normal"
+                )
                 code_style.base_style = doc.styles[base_style_name]
                 code_style.font.name = "Courier New"  # Monospace font
                 code_style.font.size = Pt(10)  # Slightly smaller size often looks good
@@ -1325,7 +1229,9 @@ def assemble_docx(
                 existing_code_style = doc.styles[code_style_name]
                 existing_code_style.font.name = "Courier New"
                 existing_code_style.font.size = Pt(10)
-                logging.info(f"Ensured '{code_style_name}' style uses Courier New, 10pt.")
+                logging.info(
+                    f"Ensured '{code_style_name}' style uses Courier New, 10pt."
+                )
             # --- End Code Block Style ---
 
             logging.info("Styles configured.")
@@ -1406,7 +1312,7 @@ def assemble_docx(
         # Alignment is set in style definition now
 
         if tp_info.get("subtitle"):
-            subtitle_p = doc.add_paragraph(tp_info["subtitle"], style="Subtitle")
+            doc.add_paragraph(tp_info["subtitle"], style="Subtitle")
             # Alignment and spacing set in style definition
         else:
             # Add extra space after title if no subtitle
@@ -1542,14 +1448,14 @@ def assemble_docx(
     chapter_keys = list(body_matter.keys())
     for i, chapter_title in enumerate(chapter_keys):
         sections_data = body_matter[chapter_title]
-        logging.info(f"Adding Chapter {i+1}: {chapter_title}")
+        logging.info(f"Adding Chapter {i + 1}: {chapter_title}")
         # Add chapter title (spacing handled by style)
         doc.add_paragraph(chapter_title, style="Heading 1")
 
         for j, section_info in enumerate(sections_data):
             section_content = section_info.get("content", "[Missing Content]")
-            section_title = section_info.get("title", f"Section {j+1}")
-            logging.debug(f"Adding content for Section {j+1}: '{section_title}'")
+            section_title = section_info.get("title", f"Section {j + 1}")
+            logging.debug(f"Adding content for Section {j + 1}: '{section_title}'")
             # Add section title (spacing handled by style)
             if section_title:
                 doc.add_paragraph(section_title, style="Heading 2")
@@ -1557,7 +1463,7 @@ def assemble_docx(
             # --- Construct context label for body section ---
             safe_chap_title = sanitize_filename(chapter_title, 30)
             safe_sec_title = sanitize_filename(section_title, 30)
-            context_label = f"Chap{i+1}_{safe_chap_title}_Sec{j+1}_{safe_sec_title}"
+            context_label = f"Chap{i + 1}_{safe_chap_title}_Sec{j + 1}_{safe_sec_title}"
             # --- End context label construction ---
 
             # Pass the main doc object as the container
@@ -1772,7 +1678,9 @@ def assemble_marketing_docx(
             # Add basic bullet formatting if needed
 
     except Exception as e:
-        logging.error(f"Could not apply basic styles to marketing doc: {e}", exc_info=True)
+        logging.error(
+            f"Could not apply basic styles to marketing doc: {e}", exc_info=True
+        )
 
     # --- Add Book Details Section ---
     doc.add_paragraph("Book Details", style="Heading 1")
@@ -1798,7 +1706,9 @@ def assemble_marketing_docx(
     model_name_used = ""
     if api_provider_local in ("llama_cpp", "llama.cpp"):
         model_name_used = (
-            api_settings_local.get("llama_cpp", api_settings_local.get("llama.cpp", {})).get("model")
+            api_settings_local.get(
+                "llama_cpp", api_settings_local.get("llama.cpp", {})
+            ).get("model")
             or "llama.cpp default"
         )
     else:
@@ -1876,9 +1786,9 @@ def assemble_marketing_docx(
     if chapter_breakdown:
         doc.add_paragraph("Chapter Breakdown", style="Heading 1")
         for i, chapter in enumerate(chapter_breakdown):
-            chapter_title = chapter.get("title", f"Chapter {i+1}")
+            chapter_title = chapter.get("title", f"Chapter {i + 1}")
             chapter_summary = chapter.get("summary", "[No summary provided]")
-            doc.add_paragraph(f"Chapter {i+1}: {chapter_title}", style="Heading 2")
+            doc.add_paragraph(f"Chapter {i + 1}: {chapter_title}", style="Heading 2")
             markdown_to_docx(
                 chapter_summary,
                 doc,
@@ -1886,7 +1796,7 @@ def assemble_marketing_docx(
                 config,
                 None,
                 equation_image_dir,
-                context_label=f"Marketing_Chapter_{i+1}",
+                context_label=f"Marketing_Chapter_{i + 1}",
             )
         doc.add_page_break()
 

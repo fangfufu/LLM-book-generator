@@ -1,9 +1,9 @@
-# book_generator/constants.py
+# src/constants.py
 
 # Default writing tone if not specified or generated
 DEFAULT_WRITING_TONE = "academic, informative, yet engaging"
 
-# --- Constants for docx_builder ---
+# --- Constants for docx_emitter ---
 # Multiplier for inline math height based on font size
 DEFAULT_INLINE_MATH_HEIGHT_MULTIPLIER = 1.05
 # Height in inches for display math images

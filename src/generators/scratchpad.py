@@ -4,14 +4,14 @@ It maintains character and location notes in dedicated markdown files,
 short summaries, and chapter drafts, enabling state tracking and resumption
 upon interruption.
 """
+
 import hashlib
 import logging
 import pathlib
 import re
-from typing import Dict, List, Optional, Tuple
 
-from book_generator.llm_api import call_llm_api
-from book_generator.utils import sanitize_filename
+from src.llm import call_llm_api
+from src.utils import sanitize_filename
 
 
 def get_scratchpad_dir(config: dict) -> pathlib.Path:
@@ -19,7 +19,9 @@ def get_scratchpad_dir(config: dict) -> pathlib.Path:
     Computes and creates the topic- and model-specific scratchpad directory.
     Uses the same subfolder naming scheme as api_cache (<sanitized_model_name>/<topic_dir_name>).
     """
-    if "scratchpad_dir_resolved" in config and isinstance(config["scratchpad_dir_resolved"], pathlib.Path):
+    if "scratchpad_dir_resolved" in config and isinstance(
+        config["scratchpad_dir_resolved"], pathlib.Path
+    ):
         return config["scratchpad_dir_resolved"]
 
     api_settings = config.get("api_settings", {})
@@ -32,7 +34,9 @@ def get_scratchpad_dir(config: dict) -> pathlib.Path:
     topic_dir_name = f"{sanitized_topic}_{topic_hash}"
 
     if api_provider in ("llama_cpp", "llama.cpp"):
-        llama_cpp_conf = api_settings.get("llama_cpp", api_settings.get("llama.cpp", {}))
+        llama_cpp_conf = api_settings.get(
+            "llama_cpp", api_settings.get("llama.cpp", {})
+        )
         model_name = llama_cpp_conf.get("model") or "llama_cpp_default_model"
     else:
         model_name = "unknown_api_provider_model"
@@ -45,7 +49,9 @@ def get_scratchpad_dir(config: dict) -> pathlib.Path:
         or "scratchpad"
     )
 
-    scratchpad_dir = pathlib.Path(base_scratchpad_dir) / sanitized_model_name / topic_dir_name
+    scratchpad_dir = (
+        pathlib.Path(base_scratchpad_dir) / sanitized_model_name / topic_dir_name
+    )
     scratchpad_dir.mkdir(parents=True, exist_ok=True)
     config["scratchpad_dir"] = str(scratchpad_dir)
     config["scratchpad_dir_resolved"] = scratchpad_dir
@@ -87,8 +93,8 @@ def has_initialized_scratchpad(scratchpad_dir: pathlib.Path) -> bool:
 
 def init_scratchpad(
     scratchpad_dir: pathlib.Path,
-    character_list: Optional[List[Dict[str, str]]],
-    location_list: Optional[List[Dict[str, str]]],
+    character_list: list[dict[str, str]] | None,
+    location_list: list[dict[str, str]] | None,
 ):
     """
     Initializes the scratchpad folder structure with separate markdown files
@@ -126,9 +132,16 @@ def init_scratchpad(
                 logging.info(f"Created scratchpad character note: {char_file.name}")
 
     char_summary_path = char_dir / "summary.md"
-    if not char_summary_path.exists() or not char_summary_path.read_text(encoding="utf-8").strip():
-        char_summary_path.write_text("\n".join(char_summary_lines) + "\n", encoding="utf-8")
-        logging.info(f"Initialized character summary in scratchpad: {char_summary_path}")
+    if (
+        not char_summary_path.exists()
+        or not char_summary_path.read_text(encoding="utf-8").strip()
+    ):
+        char_summary_path.write_text(
+            "\n".join(char_summary_lines) + "\n", encoding="utf-8"
+        )
+        logging.info(
+            f"Initialized character summary in scratchpad: {char_summary_path}"
+        )
 
     # Initialize locations
     loc_summary_lines = ["# Locations Summary\n"]
@@ -157,8 +170,13 @@ def init_scratchpad(
                 logging.info(f"Created scratchpad location note: {loc_file.name}")
 
     loc_summary_path = loc_dir / "summary.md"
-    if not loc_summary_path.exists() or not loc_summary_path.read_text(encoding="utf-8").strip():
-        loc_summary_path.write_text("\n".join(loc_summary_lines) + "\n", encoding="utf-8")
+    if (
+        not loc_summary_path.exists()
+        or not loc_summary_path.read_text(encoding="utf-8").strip()
+    ):
+        loc_summary_path.write_text(
+            "\n".join(loc_summary_lines) + "\n", encoding="utf-8"
+        )
         logging.info(f"Initialized location summary in scratchpad: {loc_summary_path}")
 
 
@@ -178,7 +196,9 @@ def load_location_summary_text(scratchpad_dir: pathlib.Path) -> str:
     return ""
 
 
-def load_characters_from_scratchpad(scratchpad_dir: pathlib.Path) -> List[Dict[str, str]]:
+def load_characters_from_scratchpad(
+    scratchpad_dir: pathlib.Path,
+) -> list[dict[str, str]]:
     """Loads character list from character/summary.md or character markdown files."""
     summary_text = load_character_summary_text(scratchpad_dir)
     characters = []
@@ -187,7 +207,12 @@ def load_characters_from_scratchpad(scratchpad_dir: pathlib.Path) -> List[Dict[s
             line = line.strip()
             match = re.match(r"^[\*\-]\s*\*\*(.*?)\*\*:\s*(.*)", line)
             if match:
-                characters.append({"name": match.group(1).strip(), "description": match.group(2).strip()})
+                characters.append(
+                    {
+                        "name": match.group(1).strip(),
+                        "description": match.group(2).strip(),
+                    }
+                )
 
     if not characters:
         char_dir = get_character_dir(scratchpad_dir)
@@ -204,7 +229,9 @@ def load_characters_from_scratchpad(scratchpad_dir: pathlib.Path) -> List[Dict[s
     return characters
 
 
-def load_locations_from_scratchpad(scratchpad_dir: pathlib.Path) -> List[Dict[str, str]]:
+def load_locations_from_scratchpad(
+    scratchpad_dir: pathlib.Path,
+) -> list[dict[str, str]]:
     """Loads location list from location/summary.md or location markdown files."""
     summary_text = load_location_summary_text(scratchpad_dir)
     locations = []
@@ -213,7 +240,12 @@ def load_locations_from_scratchpad(scratchpad_dir: pathlib.Path) -> List[Dict[st
             line = line.strip()
             match = re.match(r"^[\*\-]\s*\*\*(.*?)\*\*:\s*(.*)", line)
             if match:
-                locations.append({"name": match.group(1).strip(), "description": match.group(2).strip()})
+                locations.append(
+                    {
+                        "name": match.group(1).strip(),
+                        "description": match.group(2).strip(),
+                    }
+                )
 
     if not locations:
         loc_dir = get_location_dir(scratchpad_dir)
@@ -235,7 +267,7 @@ def detect_relevant_entities(
     chapter_title: str,
     chapter_summary: str,
     chapter_text: str,
-) -> Tuple[List[str], List[str]]:
+) -> tuple[list[str], list[str]]:
     """
     Detects which characters and locations from the scratchpad are featured or referenced
     in the chapter summary or draft.
@@ -256,7 +288,10 @@ def detect_relevant_entities(
         else:
             # Check individual name tokens if length > 3 (e.g., first or last name)
             tokens = [t for t in re.split(r"\s+", name) if len(t) > 3]
-            if any(re.search(r"\b" + re.escape(t.lower()) + r"\b", search_corpus) for t in tokens):
+            if any(
+                re.search(r"\b" + re.escape(t.lower()) + r"\b", search_corpus)
+                for t in tokens
+            ):
                 detected_chars.append(name)
 
     detected_locs = []
@@ -268,19 +303,24 @@ def detect_relevant_entities(
             detected_locs.append(name)
         else:
             tokens = [t for t in re.split(r"\s+", name) if len(t) > 3]
-            if any(re.search(r"\b" + re.escape(t.lower()) + r"\b", search_corpus) for t in tokens):
+            if any(
+                re.search(r"\b" + re.escape(t.lower()) + r"\b", search_corpus)
+                for t in tokens
+            ):
                 detected_locs.append(name)
 
     # Fallback if detection found nothing
     if not detected_chars and all_characters:
         detected_chars = [c["name"] for c in all_characters[:4] if c.get("name")]
     if not detected_locs and all_locations:
-        detected_locs = [l["name"] for l in all_locations[:3] if l.get("name")]
+        detected_locs = [loc["name"] for loc in all_locations[:3] if loc.get("name")]
 
     return detected_chars, detected_locs
 
 
-def load_specific_character_notes(scratchpad_dir: pathlib.Path, character_names: List[str]) -> str:
+def load_specific_character_notes(
+    scratchpad_dir: pathlib.Path, character_names: list[str]
+) -> str:
     """Loads and formats specific character markdown files for prompt injection."""
     char_dir = get_character_dir(scratchpad_dir)
     notes_blocks = []
@@ -313,7 +353,9 @@ def load_specific_character_notes(scratchpad_dir: pathlib.Path, character_names:
 --- End Specific Character Notes ---"""
 
 
-def load_specific_location_notes(scratchpad_dir: pathlib.Path, location_names: List[str]) -> str:
+def load_specific_location_notes(
+    scratchpad_dir: pathlib.Path, location_names: list[str]
+) -> str:
     """Loads and formats specific location markdown files for prompt injection."""
     loc_dir = get_location_dir(scratchpad_dir)
     notes_blocks = []
@@ -355,9 +397,13 @@ def save_chapter_pass(
     """Saves a chapter pass output to scratchpad/chapters."""
     chap_dir = get_chapters_dir(scratchpad_dir)
     safe_title = sanitize_filename(chapter_title, max_length=40)
-    file_path = chap_dir / f"chapter_{chapter_num:02d}_{safe_title}_pass{pass_number}.md"
+    file_path = (
+        chap_dir / f"chapter_{chapter_num:02d}_{safe_title}_pass{pass_number}.md"
+    )
     file_path.write_text(content, encoding="utf-8")
-    logging.info(f"Saved Chapter {chapter_num} Pass {pass_number} to scratchpad: {file_path.name}")
+    logging.info(
+        f"Saved Chapter {chapter_num} Pass {pass_number} to scratchpad: {file_path.name}"
+    )
 
 
 def save_chapter_summary(
@@ -376,7 +422,7 @@ def save_chapter_summary(
 
 def load_chapter_from_scratchpad(
     scratchpad_dir: pathlib.Path, chapter_num: int
-) -> Optional[Dict[str, str]]:
+) -> dict[str, str] | None:
     """
     Checks if a completed chapter (Pass 2) already exists in scratchpad.
     Returns a dict with 'content' and 'summary' if found, enabling resumption upon interruption.
@@ -460,7 +506,9 @@ Output in British English.
     _apply_scratchpad_updates(scratchpad_dir, response, chapter_num)
 
 
-def _apply_scratchpad_updates(scratchpad_dir: pathlib.Path, update_text: str, chapter_num: int):
+def _apply_scratchpad_updates(
+    scratchpad_dir: pathlib.Path, update_text: str, chapter_num: int
+):
     """Parses LLM update text and applies updates to character and location markdown files."""
     char_dir = get_character_dir(scratchpad_dir)
     loc_dir = get_location_dir(scratchpad_dir)
@@ -483,7 +531,7 @@ def _apply_scratchpad_updates(scratchpad_dir: pathlib.Path, update_text: str, ch
     elif "--- END UPDATE ---" in char_part and not loc_part:
         char_part = char_part.split("--- END UPDATE ---", 1)[0]
 
-    def _parse_entity_items(text_block: str) -> List[Dict[str, str]]:
+    def _parse_entity_items(text_block: str) -> list[dict[str, str]]:
         items = []
         current_item = None
         for line in text_block.splitlines():
@@ -534,7 +582,9 @@ def _apply_scratchpad_updates(scratchpad_dir: pathlib.Path, update_text: str, ch
             # Append chapter note to developments
             new_note = f"\n  - **Chapter {chapter_num}:** {notes_str}"
             if "## Story Developments" in existing:
-                existing = existing.replace("## Story Developments", f"## Story Developments{new_note}")
+                existing = existing.replace(
+                    "## Story Developments", f"## Story Developments{new_note}"
+                )
             else:
                 existing += f"\n\n## Story Developments\n{new_note}\n"
             char_file.write_text(existing, encoding="utf-8")
@@ -578,7 +628,9 @@ def _apply_scratchpad_updates(scratchpad_dir: pathlib.Path, update_text: str, ch
                 )
             new_note = f"\n  - **Chapter {chapter_num}:** {notes_str}"
             if "## Story Developments" in existing:
-                existing = existing.replace("## Story Developments", f"## Story Developments{new_note}")
+                existing = existing.replace(
+                    "## Story Developments", f"## Story Developments{new_note}"
+                )
             else:
                 existing += f"\n\n## Story Developments\n{new_note}\n"
             loc_file.write_text(existing, encoding="utf-8")
@@ -602,7 +654,9 @@ def _apply_scratchpad_updates(scratchpad_dir: pathlib.Path, update_text: str, ch
         _sync_summary_file(loc_dir, "Locations Summary", loc_items)
 
 
-def _sync_summary_file(folder: pathlib.Path, heading: str, updated_items: List[Dict[str, str]]):
+def _sync_summary_file(
+    folder: pathlib.Path, heading: str, updated_items: list[dict[str, str]]
+):
     """Merges updated items into the folder's summary.md."""
     summary_file = folder / "summary.md"
     existing_map = {}
@@ -622,4 +676,6 @@ def _sync_summary_file(folder: pathlib.Path, heading: str, updated_items: List[D
         lines.append(f"* **{name}**: {desc}")
 
     summary_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    logging.info(f"Synchronized scratchpad {summary_file.name} ({len(existing_map)} entries)")
+    logging.info(
+        f"Synchronized scratchpad {summary_file.name} ({len(existing_map)} entries)"
+    )

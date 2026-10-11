@@ -37,7 +37,7 @@ def sanitize_filename(filename_base, max_length=200):
 def render_latex_to_image(
     latex_string_with_delimiters, equation_image_dir, is_display_style=False
 ):
-    """
+    r"""
     Renders a LaTeX math string (potentially including delimiters like \(...\) or $$...$$)
     to a PNG image using matplotlib's mathtext.
     Adjusts padding based on whether it's display or inline style.
