@@ -91,6 +91,159 @@ def has_initialized_scratchpad(scratchpad_dir: pathlib.Path) -> bool:
     return False
 
 
+def normalize_location_key(name: str) -> str:
+    """
+    Normalizes a location name or filename stem to a canonical lookup key.
+    Handles leading articles (The, A, An), case differences, underscores,
+    hyphens, extra spaces, and punctuation.
+    """
+    if not name:
+        return ""
+    # Strip extension if passed (.md)
+    s = re.sub(r"\.md$", "", str(name).strip(), flags=re.IGNORECASE)
+    # Strip markdown bold/italics, quotes
+    s = s.strip("*_`'\"")
+    # Replace underscores, hyphens, and slashes with spaces
+    s = re.sub(r"[_\-/]+", " ", s)
+    # Remove common punctuation
+    s = re.sub(r"[.,;:!?'\"`\(\)\[\]\{\}]", "", s)
+    # Collapse whitespace and lowercase
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    # Strip leading articles ('the', 'a', 'an')
+    stripped = re.sub(r"^(?:the|a|an)\s+", "", s)
+    if stripped:
+        return stripped.strip()
+    return s.strip()
+
+
+def canonicalize_location_name(name: str) -> str:
+    """
+    Returns a clean, canonical display name for a location.
+    Removes leading articles ('The', 'A', 'An') and normalizes whitespace/underscores.
+    """
+    if not name:
+        return ""
+    s = re.sub(r"\.md$", "", str(name).strip(), flags=re.IGNORECASE)
+    s = s.strip("*_`'\"")
+    # Strip leading article if followed by more text
+    m = re.match(r"^(?:the|a|an)[_\s]+(.+)$", s, flags=re.IGNORECASE)
+    if m and m.group(1).strip():
+        s = m.group(1).strip()
+    s = re.sub(r"_+", " ", s).strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def title_case_location_name(name: str) -> str:
+    """
+    Formats a location name into Title Case, preserving existing uppercase acronyms.
+    e.g. 'victorian service tunnels' -> 'Victorian Service Tunnels'
+    'the victorian service tunnels' -> 'Victorian Service Tunnels'
+    """
+    cleaned = canonicalize_location_name(name)
+    words = cleaned.split(" ")
+    formatted_words = []
+    for w in words:
+        if not w:
+            continue
+        # Preserve acronyms like MI6, UK, HQ
+        if w.isupper() and len(w) > 1:
+            formatted_words.append(w)
+        else:
+            formatted_words.append(w[:1].upper() + w[1:])
+    return " ".join(formatted_words)
+
+
+def find_existing_character_file(
+    char_dir: pathlib.Path, name: str
+) -> pathlib.Path | None:
+    """Finds an existing markdown file in char_dir matching character name."""
+    if not char_dir.exists() or not name:
+        return None
+    safe_name = sanitize_filename(name, max_length=50)
+    exact_file = char_dir / f"{safe_name}.md"
+    if exact_file.is_file() and exact_file.name != "summary.md":
+        return exact_file
+
+    def _char_key(s: str) -> str:
+        return re.sub(r"[^\w]+", " ", str(s)).strip().lower()
+
+    target_k = _char_key(name)
+    if not target_k:
+        return None
+    for f in char_dir.glob("*.md"):
+        if f.name == "summary.md":
+            continue
+        if _char_key(f.stem) == target_k:
+            return f
+    return None
+
+
+def find_existing_location_file(
+    loc_dir: pathlib.Path, name: str
+) -> pathlib.Path | None:
+    """
+    Finds an existing markdown file in loc_dir that matches the given location name.
+    Matches by exact filename, canonicalized name, or normalized location key.
+    Also handles parenthetical variants (e.g. 'Location (Details)' vs 'Location').
+    """
+    if not loc_dir.exists() or not name:
+        return None
+
+    # 1. Exact sanitized filename match
+    safe_name = sanitize_filename(name, max_length=50)
+    exact_file = loc_dir / f"{safe_name}.md"
+    if exact_file.is_file() and exact_file.name != "summary.md":
+        return exact_file
+
+    # 2. Canonical title-cased filename match
+    canon_title = title_case_location_name(name)
+    canon_safe = sanitize_filename(canon_title, max_length=50)
+    canon_file = loc_dir / f"{canon_safe}.md"
+    if canon_file.is_file() and canon_file.name != "summary.md":
+        return canon_file
+
+    target_key = normalize_location_key(name)
+    if not target_key:
+        return None
+
+    all_files = [f for f in loc_dir.glob("*.md") if f.name != "summary.md"]
+
+    # 3. Match by normalized key across existing files
+    for f in all_files:
+        if normalize_location_key(f.stem) == target_key:
+            return f
+
+    # 4. Check if title inside file matches target_key
+    for f in all_files:
+        try:
+            content = f.read_text(encoding="utf-8")
+            title_match = re.search(r"^#\s*(.+)$", content, re.MULTILINE)
+            if title_match:
+                title = title_match.group(1).strip()
+                if normalize_location_key(title) == target_key:
+                    return f
+        except Exception:
+            continue
+
+    # 5. Check if query has parenthetical suffix matching an existing base
+    query_base = re.sub(r"\s*\([^)]*\)$", "", name).strip()
+    query_base_key = normalize_location_key(query_base)
+    if query_base_key and query_base_key != target_key:
+        for f in all_files:
+            if normalize_location_key(f.stem) == query_base_key:
+                return f
+
+    # 6. Check if an existing file has parenthetical suffix matching query
+    for f in all_files:
+        f_base = re.sub(r"\s*\([^)]*\)$", "", f.stem).strip()
+        f_base_key = normalize_location_key(f_base)
+        if f_base_key == target_key:
+            return f
+
+    return None
+
+
 def init_scratchpad(
     scratchpad_dir: pathlib.Path,
     character_list: list[dict[str, str]] | None,
@@ -107,14 +260,22 @@ def init_scratchpad(
     # Initialize characters
     char_summary_lines = ["# Characters Summary\n"]
     if character_list:
+        seen_char_keys = set()
         for char in character_list:
             name = char.get("name", "").strip()
             desc = char.get("description", "").strip()
             if not name:
                 continue
 
+            k = re.sub(r"[^\w]+", " ", name).strip().lower()
+            if k in seen_char_keys:
+                continue
+            seen_char_keys.add(k)
+
             char_summary_lines.append(f"* **{name}**: {desc}")
-            char_file = char_dir / f"{sanitize_filename(name, max_length=50)}.md"
+            char_file = find_existing_character_file(char_dir, name)
+            if not char_file:
+                char_file = char_dir / f"{sanitize_filename(name, max_length=50)}.md"
             if not char_file.exists():
                 char_content = f"""# {name}
 
@@ -146,16 +307,26 @@ def init_scratchpad(
     # Initialize locations
     loc_summary_lines = ["# Locations Summary\n"]
     if location_list:
+        seen_loc_keys = set()
         for loc in location_list:
             name = loc.get("name", "").strip()
             desc = loc.get("description", "").strip()
             if not name:
                 continue
 
-            loc_summary_lines.append(f"* **{name}**: {desc}")
-            loc_file = loc_dir / f"{sanitize_filename(name, max_length=50)}.md"
+            loc_key = normalize_location_key(name)
+            if loc_key in seen_loc_keys:
+                continue
+            seen_loc_keys.add(loc_key)
+
+            canon_name = title_case_location_name(name)
+            loc_summary_lines.append(f"* **{canon_name}**: {desc}")
+            loc_file = find_existing_location_file(loc_dir, name)
+            if not loc_file:
+                safe_name = sanitize_filename(canon_name, max_length=50)
+                loc_file = loc_dir / f"{safe_name}.md"
             if not loc_file.exists():
-                loc_content = f"""# {name}
+                loc_content = f"""# {canon_name}
 
 ## Short Summary
 {desc}
@@ -202,23 +373,32 @@ def load_characters_from_scratchpad(
     """Loads character list from character/summary.md or character markdown files."""
     summary_text = load_character_summary_text(scratchpad_dir)
     characters = []
+    seen_keys = set()
     if summary_text:
         for line in summary_text.splitlines():
             line = line.strip()
             match = re.match(r"^[\*\-]\s*\*\*(.*?)\*\*:\s*(.*)", line)
             if match:
-                characters.append(
-                    {
-                        "name": match.group(1).strip(),
-                        "description": match.group(2).strip(),
-                    }
-                )
+                raw_name = match.group(1).strip()
+                k = re.sub(r"[^\w]+", " ", raw_name).strip().lower()
+                if k and k not in seen_keys:
+                    seen_keys.add(k)
+                    characters.append(
+                        {
+                            "name": raw_name,
+                            "description": match.group(2).strip(),
+                        }
+                    )
 
     if not characters:
         char_dir = get_character_dir(scratchpad_dir)
         for f in sorted(char_dir.glob("*.md")):
             if f.name == "summary.md":
                 continue
+            k = re.sub(r"[^\w]+", " ", f.stem).strip().lower()
+            if k in seen_keys:
+                continue
+            seen_keys.add(k)
             content = f.read_text(encoding="utf-8")
             name_match = re.search(r"^#\s*(.+)$", content, re.MULTILINE)
             summary_match = re.search(r"##\s*Short Summary\s*\n+([^\n#]+)", content)
@@ -235,29 +415,40 @@ def load_locations_from_scratchpad(
     """Loads location list from location/summary.md or location markdown files."""
     summary_text = load_location_summary_text(scratchpad_dir)
     locations = []
+    seen_keys = set()
     if summary_text:
         for line in summary_text.splitlines():
             line = line.strip()
             match = re.match(r"^[\*\-]\s*\*\*(.*?)\*\*:\s*(.*)", line)
             if match:
-                locations.append(
-                    {
-                        "name": match.group(1).strip(),
-                        "description": match.group(2).strip(),
-                    }
-                )
+                raw_name = match.group(1).strip()
+                k = normalize_location_key(raw_name)
+                if k and k not in seen_keys:
+                    seen_keys.add(k)
+                    locations.append(
+                        {
+                            "name": title_case_location_name(raw_name),
+                            "description": match.group(2).strip(),
+                        }
+                    )
 
     if not locations:
         loc_dir = get_location_dir(scratchpad_dir)
         for f in sorted(loc_dir.glob("*.md")):
             if f.name == "summary.md":
                 continue
+            k = normalize_location_key(f.stem)
+            if k in seen_keys:
+                continue
+            seen_keys.add(k)
             content = f.read_text(encoding="utf-8")
             name_match = re.search(r"^#\s*(.+)$", content, re.MULTILINE)
             summary_match = re.search(r"##\s*Short Summary\s*\n+([^\n#]+)", content)
             name = name_match.group(1).strip() if name_match else f.stem
             desc = summary_match.group(1).strip() if summary_match else ""
-            locations.append({"name": name, "description": desc})
+            locations.append(
+                {"name": title_case_location_name(name), "description": desc}
+            )
 
     return locations
 
@@ -278,36 +469,56 @@ def detect_relevant_entities(
     search_corpus = f"{chapter_title}\n{chapter_summary}\n{chapter_text}".lower()
 
     detected_chars = []
+    seen_char_keys = set()
     for char in all_characters:
         name = char.get("name", "").strip()
         if not name:
             continue
-        # Exact match of full name or name parts
+        k = re.sub(r"[^\w]+", " ", name).strip().lower()
+        if k in seen_char_keys:
+            continue
+
+        matched = False
         if re.search(r"\b" + re.escape(name.lower()) + r"\b", search_corpus):
-            detected_chars.append(name)
+            matched = True
         else:
-            # Check individual name tokens if length > 3 (e.g., first or last name)
             tokens = [t for t in re.split(r"\s+", name) if len(t) > 3]
             if any(
                 re.search(r"\b" + re.escape(t.lower()) + r"\b", search_corpus)
                 for t in tokens
             ):
-                detected_chars.append(name)
+                matched = True
+
+        if matched:
+            seen_char_keys.add(k)
+            detected_chars.append(name)
 
     detected_locs = []
+    seen_loc_keys = set()
     for loc in all_locations:
         name = loc.get("name", "").strip()
         if not name:
             continue
+        k = normalize_location_key(name)
+        if k in seen_loc_keys:
+            continue
+
+        matched = False
         if re.search(r"\b" + re.escape(name.lower()) + r"\b", search_corpus):
-            detected_locs.append(name)
+            matched = True
+        elif k and re.search(r"\b" + re.escape(k) + r"\b", search_corpus):
+            matched = True
         else:
-            tokens = [t for t in re.split(r"\s+", name) if len(t) > 3]
+            tokens = [t for t in re.split(r"\s+", k) if len(t) > 3]
             if any(
                 re.search(r"\b" + re.escape(t.lower()) + r"\b", search_corpus)
                 for t in tokens
             ):
-                detected_locs.append(name)
+                matched = True
+
+        if matched:
+            seen_loc_keys.add(k)
+            detected_locs.append(name)
 
     # Fallback if detection found nothing
     if not detected_chars and all_characters:
@@ -324,25 +535,18 @@ def load_specific_character_notes(
     """Loads and formats specific character markdown files for prompt injection."""
     char_dir = get_character_dir(scratchpad_dir)
     notes_blocks = []
+    seen_files = set()
 
     for name in character_names:
-        safe_name = sanitize_filename(name, max_length=50)
-        char_file = char_dir / f"{safe_name}.md"
-        if char_file.exists():
+        char_file = find_existing_character_file(char_dir, name)
+        if char_file and char_file.exists():
+            if char_file in seen_files:
+                continue
+            seen_files.add(char_file)
             content = char_file.read_text(encoding="utf-8").strip()
             notes_blocks.append(content)
         else:
-            # Fallback search across directory
-            found = False
-            for f in char_dir.glob("*.md"):
-                if f.name == "summary.md":
-                    continue
-                if safe_name.lower() in f.stem.lower():
-                    notes_blocks.append(f.read_text(encoding="utf-8").strip())
-                    found = True
-                    break
-            if not found:
-                notes_blocks.append(f"# {name}\nNo detailed notes recorded yet.")
+            notes_blocks.append(f"# {name}\nNo detailed notes recorded yet.")
 
     if not notes_blocks:
         return ""
@@ -359,24 +563,19 @@ def load_specific_location_notes(
     """Loads and formats specific location markdown files for prompt injection."""
     loc_dir = get_location_dir(scratchpad_dir)
     notes_blocks = []
+    seen_files = set()
 
     for name in location_names:
-        safe_name = sanitize_filename(name, max_length=50)
-        loc_file = loc_dir / f"{safe_name}.md"
-        if loc_file.exists():
+        loc_file = find_existing_location_file(loc_dir, name)
+        if loc_file and loc_file.exists():
+            if loc_file in seen_files:
+                continue
+            seen_files.add(loc_file)
             content = loc_file.read_text(encoding="utf-8").strip()
             notes_blocks.append(content)
         else:
-            found = False
-            for f in loc_dir.glob("*.md"):
-                if f.name == "summary.md":
-                    continue
-                if safe_name.lower() in f.stem.lower():
-                    notes_blocks.append(f.read_text(encoding="utf-8").strip())
-                    found = True
-                    break
-            if not found:
-                notes_blocks.append(f"# {name}\nNo detailed notes recorded yet.")
+            canon_name = title_case_location_name(name)
+            notes_blocks.append(f"# {canon_name}\nNo detailed notes recorded yet.")
 
     if not notes_blocks:
         return ""
@@ -475,10 +674,10 @@ Review the following chapter text for Chapter {chapter_num} titled '{chapter_tit
 --- End Chapter Content ---
 
 Your task is to update our scratchpad notes based on what happened in this chapter.
-1. Identify characters who appeared or had developments in this chapter. For each, give an updated 1-2 sentence summary and concise bullet point notes on what happened to them / their current status in Chapter {chapter_num}.
+1. Identify characters who appeared or had developments in this chapter. If a character is already listed above, reuse their exact name. For each, give an updated 1-2 sentence summary and concise bullet point notes on what happened to them / their current status in Chapter {chapter_num}.
 2. If any new significant character was introduced, provide their full name, short 1-2 sentence summary, and initial notes.
-3. Identify locations that appeared in this chapter. For each, give an updated 1-2 sentence summary and concise bullet point notes on events, atmosphere, or changes that took place there in Chapter {chapter_num}.
-4. If any new significant physical location was introduced, provide its name, short 1-2 sentence summary, and initial notes.
+3. Identify locations that appeared in this chapter. If a location is already listed above in Current Locations Overview, reuse its exact name (do not add leading articles like 'The' or change capitalization). For each, give an updated 1-2 sentence summary and concise bullet point notes on events, atmosphere, or changes that took place there in Chapter {chapter_num}.
+4. If any new significant physical location was introduced, provide its name (avoid unnecessary leading articles like 'The' or 'A'), short 1-2 sentence summary, and initial notes.
 
 Format your response strictly using this Markdown structure:
 
@@ -566,8 +765,10 @@ def _apply_scratchpad_updates(
         summary = item["summary"]
         notes_str = "; ".join(item["notes"]) if item["notes"] else summary
 
-        safe_name = sanitize_filename(name, max_length=50)
-        char_file = char_dir / f"{safe_name}.md"
+        char_file = find_existing_character_file(char_dir, name)
+        if not char_file:
+            safe_name = sanitize_filename(name, max_length=50)
+            char_file = char_dir / f"{safe_name}.md"
 
         if char_file.exists():
             existing = char_file.read_text(encoding="utf-8")
@@ -606,7 +807,9 @@ def _apply_scratchpad_updates(
 
     # Rebuild character summary.md
     if char_items:
-        _sync_summary_file(char_dir, "Characters Summary", char_items)
+        _sync_summary_file(
+            char_dir, "Characters Summary", char_items, is_location=False
+        )
 
     # Update locations
     for item in loc_items:
@@ -614,10 +817,10 @@ def _apply_scratchpad_updates(
         summary = item["summary"]
         notes_str = "; ".join(item["notes"]) if item["notes"] else summary
 
-        safe_name = sanitize_filename(name, max_length=50)
-        loc_file = loc_dir / f"{safe_name}.md"
+        loc_file = find_existing_location_file(loc_dir, name)
+        canon_name = title_case_location_name(name)
 
-        if loc_file.exists():
+        if loc_file and loc_file.exists():
             existing = loc_file.read_text(encoding="utf-8")
             if "## Short Summary" in existing:
                 existing = re.sub(
@@ -636,7 +839,9 @@ def _apply_scratchpad_updates(
             loc_file.write_text(existing, encoding="utf-8")
             logging.info(f"Updated scratchpad location note: {loc_file.name}")
         else:
-            new_content = f"""# {name}
+            safe_name = sanitize_filename(canon_name, max_length=50)
+            loc_file = loc_dir / f"{safe_name}.md"
+            new_content = f"""# {canon_name}
 
 ## Short Summary
 {summary}
@@ -651,31 +856,60 @@ def _apply_scratchpad_updates(
 
     # Rebuild location summary.md
     if loc_items:
-        _sync_summary_file(loc_dir, "Locations Summary", loc_items)
+        _sync_summary_file(loc_dir, "Locations Summary", loc_items, is_location=True)
 
 
 def _sync_summary_file(
-    folder: pathlib.Path, heading: str, updated_items: list[dict[str, str]]
+    folder: pathlib.Path,
+    heading: str,
+    updated_items: list[dict[str, str]],
+    is_location: bool = False,
 ):
-    """Merges updated items into the folder's summary.md."""
+    """Merges updated items into the folder's summary.md, collapsing variants."""
     summary_file = folder / "summary.md"
-    existing_map = {}
+    entries: dict[str, tuple[str, str]] = {}
+
     if summary_file.exists():
         text = summary_file.read_text(encoding="utf-8")
         for line in text.splitlines():
             m = re.match(r"^[\*\-]\s*\*\*(.*?)\*\*:\s*(.*)", line.strip())
             if m:
-                existing_map[m.group(1).strip()] = m.group(2).strip()
+                raw_name = m.group(1).strip()
+                raw_desc = m.group(2).strip()
+                if is_location:
+                    k = normalize_location_key(raw_name)
+                    base_raw = re.sub(r"\s*\([^)]*\)$", "", raw_name).strip()
+                    base_k = normalize_location_key(base_raw)
+                    if base_k and base_k in entries:
+                        k = base_k
+                else:
+                    k = re.sub(r"[^\w]+", " ", raw_name).strip().lower()
+                if k:
+                    entries[k] = (raw_name, raw_desc)
 
     # Apply updates
     for item in updated_items:
-        existing_map[item["name"]] = item["summary"]
+        name = item["name"]
+        summary = item["summary"]
+        if is_location:
+            k = normalize_location_key(name)
+            base_k = normalize_location_key(re.sub(r"\s*\([^)]*\)$", "", name))
+            if base_k and base_k in entries:
+                k = base_k
+            display_name = title_case_location_name(
+                entries[k][0] if k in entries else name
+            )
+        else:
+            k = re.sub(r"[^\w]+", " ", name).strip().lower()
+            display_name = entries[k][0] if k in entries else name
+
+        entries[k] = (display_name, summary)
 
     lines = [f"# {heading}\n"]
-    for name, desc in existing_map.items():
+    for _k, (name, desc) in entries.items():
         lines.append(f"* **{name}**: {desc}")
 
     summary_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     logging.info(
-        f"Synchronized scratchpad {summary_file.name} ({len(existing_map)} entries)"
+        f"Synchronized scratchpad {summary_file.name} ({len(entries)} entries)"
     )

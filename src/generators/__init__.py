@@ -39,7 +39,10 @@ from src.generators.non_fiction import (
     generate_section_titles,
 )
 from src.generators.scratchpad import (
+    canonicalize_location_name,
     detect_relevant_entities,
+    find_existing_character_file,
+    find_existing_location_file,
     get_chapters_dir,
     get_character_dir,
     get_location_dir,
@@ -53,14 +56,19 @@ from src.generators.scratchpad import (
     load_locations_from_scratchpad,
     load_specific_character_notes,
     load_specific_location_notes,
+    normalize_location_key,
     save_chapter_pass,
     save_chapter_summary,
+    title_case_location_name,
     update_scratchpad_entities,
 )
 
 __all__ = [
+    "canonicalize_location_name",
     "detect_relevant_entities",
     "determine_gender_from_name",
+    "find_existing_character_file",
+    "find_existing_location_file",
     "format_character_list_for_prompt",
     "format_location_list_for_prompt",
     "generate_appendix_subsection_content",
@@ -101,10 +109,12 @@ __all__ = [
     "load_locations_from_scratchpad",
     "load_specific_character_notes",
     "load_specific_location_notes",
+    "normalize_location_key",
     "save_chapter_pass",
     "save_chapter_summary",
     "save_summary_to_markdown",
     "summarize_fiction_chapter",
+    "title_case_location_name",
     "update_character_list",
     "update_location_list",
     "update_scratchpad_entities",

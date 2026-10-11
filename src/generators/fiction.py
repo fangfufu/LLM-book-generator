@@ -5,6 +5,10 @@ This file contains the functions for generating fiction content.
 import logging
 import re
 
+from src.generators.scratchpad import (
+    normalize_location_key,
+    title_case_location_name,
+)
 from src.llm import call_llm_api
 from src.utils import sanitize_filename
 
@@ -308,10 +312,20 @@ Output in British English.
                     locations.append({"name": name, "description": description})
 
         if locations:
+            deduped_locations = []
+            seen_keys = set()
+            for loc in locations:
+                k = normalize_location_key(loc["name"])
+                if k and k not in seen_keys:
+                    seen_keys.add(k)
+                    canon_name = title_case_location_name(loc["name"])
+                    deduped_locations.append(
+                        {"name": canon_name, "description": loc["description"]}
+                    )
             logging.info(
-                f"Successfully generated and parsed {len(locations)} locations."
+                f"Successfully generated and parsed {len(deduped_locations)} locations."
             )
-            return locations
+            return deduped_locations
         else:
             logging.error(
                 f"Could not parse location list from API response. Response:\n{cleaned_text}"
@@ -382,8 +396,20 @@ Output in British English.
                     locations.append({"name": name, "description": description})
 
         if locations:
-            logging.info(f"Successfully updated and parsed {len(locations)} locations.")
-            return locations
+            deduped_locations = []
+            seen_keys = set()
+            for loc in locations:
+                k = normalize_location_key(loc["name"])
+                if k and k not in seen_keys:
+                    seen_keys.add(k)
+                    canon_name = title_case_location_name(loc["name"])
+                    deduped_locations.append(
+                        {"name": canon_name, "description": loc["description"]}
+                    )
+            logging.info(
+                f"Successfully updated and parsed {len(deduped_locations)} locations."
+            )
+            return deduped_locations
         else:
             logging.error(
                 f"Could not parse updated location list from API response. Response:\n{cleaned_text}"

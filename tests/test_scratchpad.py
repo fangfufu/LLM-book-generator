@@ -6,9 +6,12 @@ from unittest.mock import patch
 from src.generators.fiction import (
     generate_fiction_chapter_pass1,
     generate_fiction_chapter_pass2,
+    generate_location_list,
 )
 from src.generators.scratchpad import (
+    canonicalize_location_name,
     detect_relevant_entities,
+    find_existing_location_file,
     get_character_dir,
     get_location_dir,
     get_scratchpad_dir,
@@ -21,8 +24,10 @@ from src.generators.scratchpad import (
     load_locations_from_scratchpad,
     load_specific_character_notes,
     load_specific_location_notes,
+    normalize_location_key,
     save_chapter_pass,
     save_chapter_summary,
+    title_case_location_name,
     update_scratchpad_entities,
 )
 
@@ -378,6 +383,180 @@ class TestScratchpad(unittest.TestCase):
         self.assertEqual(mock_pass2.call_count, 0)
         self.assertEqual(mock_char_list.call_count, 0)
         self.assertEqual(mock_loc_list.call_count, 0)
+
+    def test_normalize_location_key(self):
+        # The user's exact examples:
+        key1 = normalize_location_key("Victorian_service_tunnels.md")
+        key2 = normalize_location_key("Victorian_Service_Tunnels.md")
+        key3 = normalize_location_key("The_Victorian_service_tunnels.md")
+        self.assertEqual(key1, "victorian service tunnels")
+        self.assertEqual(key2, "victorian service tunnels")
+        self.assertEqual(key3, "victorian service tunnels")
+
+        # More variations with articles, spaces, case, and punctuation:
+        self.assertEqual(
+            normalize_location_key("The Victorian service tunnels"),
+            "victorian service tunnels",
+        )
+        self.assertEqual(
+            normalize_location_key("Victorian Service Tunnels"),
+            "victorian service tunnels",
+        )
+        self.assertEqual(
+            normalize_location_key("A Chelsea townhouse"),
+            "chelsea townhouse",
+        )
+        self.assertEqual(
+            normalize_location_key("Chelsea townhouse"),
+            "chelsea townhouse",
+        )
+        self.assertEqual(
+            normalize_location_key("The Grand Ballroom"),
+            "grand ballroom",
+        )
+        self.assertEqual(
+            normalize_location_key("Grand Ballroom"),
+            "grand ballroom",
+        )
+
+    def test_canonicalize_and_title_case_location_name(self):
+        self.assertEqual(
+            canonicalize_location_name("The Victorian service tunnels"),
+            "Victorian service tunnels",
+        )
+        self.assertEqual(
+            title_case_location_name("The Victorian service tunnels"),
+            "Victorian Service Tunnels",
+        )
+        self.assertEqual(
+            title_case_location_name("Victorian_service_tunnels"),
+            "Victorian Service Tunnels",
+        )
+        self.assertEqual(
+            title_case_location_name("A Chelsea townhouse"),
+            "Chelsea Townhouse",
+        )
+        self.assertEqual(
+            title_case_location_name("MI6 Headquarters"),
+            "MI6 Headquarters",
+        )
+
+    def test_find_existing_location_file(self):
+        scratchpad_dir = self.base_scratchpad / "test_find_loc"
+        loc_dir = get_location_dir(scratchpad_dir)
+        target_file = loc_dir / "Victorian_Service_Tunnels.md"
+        target_file.write_text("# Victorian Service Tunnels\n", encoding="utf-8")
+
+        # Search with various names:
+        found1 = find_existing_location_file(loc_dir, "Victorian service tunnels")
+        found2 = find_existing_location_file(loc_dir, "The Victorian service tunnels")
+        found3 = find_existing_location_file(loc_dir, "Victorian_Service_Tunnels")
+        found4 = find_existing_location_file(
+            loc_dir, "Victorian service tunnels (Buckingham Palace)"
+        )
+
+        self.assertEqual(found1, target_file)
+        self.assertEqual(found2, target_file)
+        self.assertEqual(found3, target_file)
+        self.assertEqual(found4, target_file)
+
+    @patch("src.generators.scratchpad.call_llm_api")
+    def test_location_collapsing_during_updates(self, mock_llm):
+        scratchpad_dir = self.base_scratchpad / "test_update_collapse"
+        loc_dir = get_location_dir(scratchpad_dir)
+
+        # Init with canonical location
+        locations = [
+            {
+                "name": "Victorian Service Tunnels",
+                "description": "Subterranean tunnels.",
+            }
+        ]
+        init_scratchpad(scratchpad_dir, None, locations)
+
+        canonical_file = loc_dir / "Victorian_Service_Tunnels.md"
+        self.assertTrue(canonical_file.exists())
+
+        # Chapter 1 update: LLM outputs lowercase variant
+        mock_llm.return_value = """--- CHARACTERS UPDATE ---
+--- LOCATIONS UPDATE ---
+* **Victorian service tunnels**: Heavy soot and moisture.
+  - Notes: Elias navigates through junction 4.
+--- END UPDATE ---
+"""
+        config = {"cache_dir": str(self.base_scratchpad)}
+        update_scratchpad_entities(
+            config, scratchpad_dir, "Chapter One", "Text...", chapter_num=1
+        )
+
+        # Should not create Victorian_service_tunnels.md
+        self.assertFalse((loc_dir / "Victorian_service_tunnels.md").exists())
+        content = canonical_file.read_text(encoding="utf-8")
+        self.assertIn("Chapter 1", content)
+        self.assertIn("junction 4", content)
+
+        # Chapter 2 update: LLM outputs leading 'The' variant
+        mock_llm.return_value = """--- CHARACTERS UPDATE ---
+--- LOCATIONS UPDATE ---
+* **The Victorian service tunnels**: Reality distortion detected.
+  - Notes: Walls flicker between masonry and wireframes.
+--- END UPDATE ---
+"""
+        update_scratchpad_entities(
+            config, scratchpad_dir, "Chapter Two", "Text...", chapter_num=2
+        )
+
+        # Should not create The_Victorian_service_tunnels.md
+        self.assertFalse((loc_dir / "The_Victorian_service_tunnels.md").exists())
+        content = canonical_file.read_text(encoding="utf-8")
+        self.assertIn("Chapter 2", content)
+        self.assertIn("wireframes", content)
+
+        # Summary.md should remain single-entry
+        summary_text = (loc_dir / "summary.md").read_text(encoding="utf-8")
+        self.assertEqual(summary_text.count("Victorian Service Tunnels"), 1)
+        self.assertNotIn("The Victorian service tunnels", summary_text)
+
+    def test_load_specific_notes_with_location_variant(self):
+        scratchpad_dir = self.base_scratchpad / "test_load_notes_variant"
+        loc_dir = get_location_dir(scratchpad_dir)
+        loc_file = loc_dir / "Victorian_Service_Tunnels.md"
+        loc_file.write_text(
+            """# Victorian Service Tunnels
+
+## Short Summary
+Subterranean tunnels.
+
+## Location Details & Atmosphere
+- **Significance:** Subterranean tunnels.
+- **Story Developments:**
+  - **Chapter 1:** Secret passage discovered.
+""",
+            encoding="utf-8",
+        )
+
+        # Query with variant name containing 'The' and lowercase:
+        notes = load_specific_location_notes(
+            scratchpad_dir, ["The Victorian service tunnels"]
+        )
+        self.assertIn("Secret passage discovered", notes)
+        self.assertIn("Victorian Service Tunnels", notes)
+
+    @patch("src.generators.fiction.call_llm_api")
+    def test_generate_location_list_deduplication(self, mock_llm):
+        mock_llm.return_value = """* **Victorian Service Tunnels**: Analogue tunnel system.
+* **The Victorian service tunnels**: Subterranean tunnels under London.
+* **Chelsea Townhouse**: Julian Vane's residence.
+* **A Chelsea townhouse**: Luxurious building.
+"""
+        config = {}
+        locations = generate_location_list(config, "Overall master plot")
+        self.assertIsNotNone(locations)
+        # Should be deduplicated to exactly 2 locations:
+        self.assertEqual(len(locations), 2)
+        names = [loc["name"] for loc in locations]
+        self.assertIn("Victorian Service Tunnels", names)
+        self.assertIn("Chelsea Townhouse", names)
 
 
 if __name__ == "__main__":
