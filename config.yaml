@@ -41,12 +41,6 @@ api_settings:
     # llm_options:
     #   temperature: 0.8
     #   n_predict: -1
-repetition_check:
-  enabled: true
-  min_sentence_length_for_repetition_check: 10
-  max_history_size: 10
-  max_retries_on_repetition: 10
-  repetition_retry_delay_seconds: 1
 style_params:
   font_name: Cambria
   font_size: 11.0

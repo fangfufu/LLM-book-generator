@@ -7,44 +7,31 @@ from book_generator.llm_api import (
     call_llm_api,
     _call_llama_cpp_api_internal,
 )
-from book_generator.constants import REPETITION_DETECTED
 
 
 class TestLlmApi(unittest.TestCase):
-    @patch("os.remove")
-    @patch("book_generator.llm_api.get_cache_path")
+    @patch("book_generator.llm_api.save_to_cache")
     @patch("book_generator.llm_api.load_from_cache")
     @patch("book_generator.llm_api._call_llama_cpp_api_internal")
-    def test_repetition_detection_and_retry_llama_cpp(
+    def test_call_llm_api(
         self,
         mock_call_llama_cpp,
         mock_load_from_cache,
-        mock_get_cache_path,
-        mock_os_remove,
+        mock_save_to_cache,
     ):
-        # Arrange
         mock_load_from_cache.return_value = None
-        mock_call_llama_cpp.side_effect = [REPETITION_DETECTED, "successful response"]
-        mock_get_cache_path.return_value = MagicMock()
-        mock_get_cache_path.return_value.exists.return_value = True
+        mock_call_llama_cpp.return_value = "successful response"
 
         config = {
             "api_settings": {"provider": "llama_cpp"},
-            "repetition_check": {
-                "enabled": True,
-                "max_retries_on_repetition": 1,
-                "repetition_retry_delay_seconds": 0,
-            },
         }
         prompt = "test prompt"
 
-        # Act
         result = call_llm_api(prompt, config)
 
-        # Assert
         self.assertEqual(result, "successful response")
-        self.assertEqual(mock_call_llama_cpp.call_count, 2)
-        mock_os_remove.assert_called_once_with(mock_get_cache_path.return_value)
+        self.assertEqual(mock_call_llama_cpp.call_count, 1)
+        mock_save_to_cache.assert_called_once_with(prompt, "successful response", "api_cache", None)
 
     @patch("requests.post")
     def test_llama_cpp_non_streaming_native_completion_endpoint(self, mock_post):
@@ -166,41 +153,10 @@ class TestLlmApi(unittest.TestCase):
                 },
             },
             "debug_options": {"verbose_debug": True},
-            "repetition_check": {"enabled": False},
         }
 
         result = _call_llama_cpp_api_internal("Tell a tale.", config)
         self.assertEqual(result, "Once upon a time.")
-
-    @patch("requests.post")
-    def test_llama_cpp_streaming_repetition_detected(self, mock_post):
-        mock_tokenize_resp = MagicMock()
-        mock_tokenize_resp.status_code = 200
-        mock_tokenize_resp.json.return_value = {"tokens": [1, 2]}
-
-        mock_stream_resp = MagicMock()
-        mock_stream_resp.status_code = 200
-        mock_stream_resp.iter_lines.return_value = [
-            b'data: {"content": "This is a repeating sentence."}',
-            b'data: {"content": " This is a repeating sentence."}',
-        ]
-        mock_post.side_effect = [mock_tokenize_resp, mock_stream_resp]
-
-        config = {
-            "api_settings": {
-                "llama_cpp": {
-                    "base_url": "http://localhost:8080",
-                },
-            },
-            "debug_options": {"verbose_debug": True},
-            "repetition_check": {
-                "enabled": True,
-                "min_sentence_length_for_repetition_check": 10,
-            },
-        }
-
-        result = _call_llama_cpp_api_internal("Echo.", config)
-        self.assertEqual(result, REPETITION_DETECTED)
 
     @patch("time.sleep")
     @patch("requests.post")
@@ -290,7 +246,6 @@ class TestLlmApi(unittest.TestCase):
                 },
             },
             "debug_options": {"verbose_debug": True},
-            "repetition_check": {"enabled": False},
         }
 
         result = _call_llama_cpp_api_internal("Generate", config)
@@ -354,7 +309,6 @@ class TestLlmApi(unittest.TestCase):
                 },
             },
             "debug_options": {"verbose_debug": True},
-            "repetition_check": {"enabled": False},
         }
 
         result = _call_llama_cpp_api_internal("Generate", config)

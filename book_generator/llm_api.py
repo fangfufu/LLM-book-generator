@@ -4,71 +4,6 @@ import logging
 import os
 import pathlib
 import re
-
-
-def _check_for_repetition(
-    current_text,
-    repetition_check_config,
-    full_response_text_parts_for_check=None,
-):
-    """
-    Checks for repeated sentences or paragraphs in the generated text.
-
-    Args:
-        current_text (str): The current chunk of text from the LLM stream.
-        repetition_check_config (dict): Configuration for repetition checks.
-        full_response_text_parts_for_check (list, optional): A list containing
-            the history of text parts for more robust checking. Defaults to None.
-
-    Returns:
-        bool: True if a repetition is detected, False otherwise.
-    """
-    min_sentence_length = repetition_check_config.get(
-        "min_sentence_length_for_repetition_check", 10
-    )
-
-    # Check 0: Hacky way to remove leaked tags
-    if "start_of_turn" in current_text or "end_of_turn" in current_text:
-        return True
-
-    # Check 1: Exact repetition of the current chunk in the history
-    # max_history_size = repetition_check_config.get("max_history_size", 5)
-    # if (
-    #     full_response_text_parts_for_check is not None
-    #     and len(current_text) > min_sentence_length
-    # ):
-    #     # Count occurrences of the current chunk in the recent history
-    #     recent_history = full_response_text_parts_for_check[-max_history_size:]
-    #     if recent_history.count(current_text) > 1:
-    #         logging.warning(
-    #             f"Repetition detected (exact chunk): Found chunk '{current_text}' multiple times in recent history."
-    #         )
-    #         return True
-            
-    # Check 2: Repetition of sentences using the full text
-    # This check is more expensive, so it's done on the accumulated text
-    full_text = "".join(full_response_text_parts_for_check or [])
-    if len(full_text) < min_sentence_length * 2:  # Not enough text to check
-        return False
-
-    # Simple sentence tokenization
-    sentences = [
-        s.strip() for s in full_text.replace("!", ".").replace("?", ".").split(".") if s
-    ]
-    long_sentences = [s for s in sentences if len(s) > min_sentence_length]
-
-    if len(long_sentences) > len(set(long_sentences)):
-        # Find the repeated sentence for logging purposes
-        seen = set()
-        for sentence in long_sentences:
-            if sentence in seen:
-                logging.warning(
-                    f"Repetition detected (sentence): Sentence '{sentence}' is repeated."
-                )
-                return True
-            seen.add(sentence)
-
-    return False
 import sys
 import time
 
@@ -77,7 +12,6 @@ from dotenv import load_dotenv
 from transformers import AutoTokenizer
 
 from book_generator.utils import sanitize_filename
-from book_generator.constants import REPETITION_DETECTED
 
 
 def setup_environment():
@@ -422,7 +356,6 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                 full_reasoning_parts = []
                 thought_parser = StreamThoughtParser()
                 stream_section = None
-                repetition_check_config = config.get("repetition_check", {})
                 print(f"\n--- llama.cpp Stream ({model_display}) ---")
                 for line in response.iter_lines():
                     if line:
@@ -496,21 +429,6 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                                             print("\n[Response] ", end="", flush=True)
                                             stream_section = "response"
                                         print(segment, end="", flush=True)
-
-                                        # Only check for repetition on response text, not internal thoughts
-                                        if repetition_check_config.get("enabled", False):
-                                            if _check_for_repetition(
-                                                segment,
-                                                repetition_check_config,
-                                                full_response_text_parts,
-                                            ):
-                                                logging.warning(
-                                                    "Repetition detected. Terminating and retrying."
-                                                )
-                                                print(
-                                                    "\n--- End llama.cpp Stream (Repetition Detected) ---"
-                                                )
-                                                return REPETITION_DETECTED
 
                             is_done = chunk.get("stop", False) or (
                                 "choices" in chunk
@@ -653,8 +571,7 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
 
 def call_llm_api(prompt, config, cache_prefix=None):
     """
-    Calls the configured LLM API (llama.cpp), using caching and handling retries.
-    Includes special handling for repetition detection.
+    Calls the configured LLM API (llama.cpp), using caching.
     """
     cache_dir = config.get("cache_dir", "api_cache")
     cached_response = load_from_cache(prompt, cache_dir, cache_prefix)
@@ -667,45 +584,13 @@ def call_llm_api(prompt, config, cache_prefix=None):
         f"Calling {api_provider.upper()} API... (Cache Prefix: {cache_prefix or 'None'})"
     )
 
-    repetition_check_config = config.get("repetition_check", {})
-    max_retries_repetition = repetition_check_config.get(
-        "max_retries_on_repetition", 2
-    )
-    repetition_retry_delay = repetition_check_config.get(
-        "repetition_retry_delay_seconds", 5
-    )
-    response_text = None
+    if api_provider in ("llama_cpp", "llama.cpp"):
+        response_text = _call_llama_cpp_api_internal(prompt, config, cache_prefix)
+    else:
+        logging.error(f"Unsupported API provider: {api_provider}")
+        return None
 
-    for attempt in range(max_retries_repetition + 1):
-        if api_provider in ("llama_cpp", "llama.cpp"):
-            response_text = _call_llama_cpp_api_internal(prompt, config, cache_prefix)
-        else:
-            logging.error(f"Unsupported API provider: {api_provider}")
-            return None
-
-        if response_text == REPETITION_DETECTED:
-            logging.warning(
-                f"Repetition detected in response. Attempt {attempt + 1}/{max_retries_repetition + 1}."
-            )
-            if attempt < max_retries_repetition:
-                logging.info(
-                    f"Retrying after {repetition_retry_delay} seconds due to repetition..."
-                )
-                time.sleep(repetition_retry_delay)
-                # Invalidate cache for this specific prompt before retrying
-                cache_file = get_cache_path(prompt, cache_dir, cache_prefix)
-                if cache_file.exists():
-                    os.remove(cache_file)
-            else:
-                logging.error(
-                    "Max retries for repetition reached. Returning None."
-                )
-                return None
-        else:
-            # If not a repetition or another error, break the loop
-            break
-
-    if response_text is not None and response_text != REPETITION_DETECTED:
+    if response_text is not None:
         save_to_cache(prompt, response_text, cache_dir, cache_prefix)
 
     return response_text
