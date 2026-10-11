@@ -3,7 +3,8 @@ generation_params:
   author_name: Fufu Fang
   author_gender: male
   main_topic: >-
-    Counterintelligence operations against the Reptilian operatives embedded in the British establishment
+    Counterintelligence operations against the Reptilian operatives
+    embedded in the British establishment
   is_fiction: true
   fiction_chapter_count: 50
   generate_foreword: true
