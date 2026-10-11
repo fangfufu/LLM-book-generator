@@ -47,7 +47,7 @@ class TestLlmApi(unittest.TestCase):
         mock_os_remove.assert_called_once_with(mock_get_cache_path.return_value)
 
     @patch("requests.post")
-    def test_llama_cpp_non_streaming_native(self, mock_post):
+    def test_llama_cpp_non_streaming_native_completion_endpoint(self, mock_post):
         mock_tokenize_resp = MagicMock()
         mock_tokenize_resp.status_code = 200
         mock_tokenize_resp.json.return_value = {"tokens": [1, 2, 3, 4]}
@@ -65,6 +65,7 @@ class TestLlmApi(unittest.TestCase):
                 "provider": "llama_cpp",
                 "llama_cpp": {
                     "base_url": "http://localhost:8080",
+                    "endpoint": "/completion",
                     "model": "llama-3",
                     "temperature": 0.7,
                 },
@@ -80,6 +81,42 @@ class TestLlmApi(unittest.TestCase):
         args, kwargs = completion_call
         self.assertEqual(args[0], "http://localhost:8080/completion")
         self.assertEqual(kwargs["json"]["prompt"], "Write a chapter.")
+        self.assertEqual(kwargs["json"]["temperature"], 0.7)
+        self.assertFalse(kwargs["stream"])
+
+    @patch("requests.post")
+    def test_llama_cpp_chat_completions_default(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1, 2]}
+
+        mock_completion_resp = MagicMock()
+        mock_completion_resp.status_code = 200
+        mock_completion_resp.json.return_value = {
+            "choices": [{"message": {"content": "Chat completion story text"}}],
+        }
+        mock_post.side_effect = [mock_tokenize_resp, mock_completion_resp]
+
+        config = {
+            "api_settings": {
+                "provider": "llama_cpp",
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                    "model": "llama-3",
+                    "temperature": 0.7,
+                },
+            },
+            "debug_options": {"verbose_debug": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Write a chapter.", config)
+        self.assertEqual(result, "Chat completion story text")
+        self.assertEqual(mock_post.call_count, 2)
+        completion_call = mock_post.call_args_list[1]
+        args, kwargs = completion_call
+        self.assertEqual(args[0], "http://localhost:8080/v1/chat/completions")
+        self.assertEqual(kwargs["json"]["messages"], [{"role": "user", "content": "Write a chapter."}])
+        self.assertEqual(kwargs["json"]["model"], "llama-3")
         self.assertEqual(kwargs["json"]["temperature"], 0.7)
         self.assertFalse(kwargs["stream"])
 

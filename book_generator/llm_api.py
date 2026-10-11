@@ -159,10 +159,19 @@ def _clean_response_text(text, strip_thinking=True):
     cleaned = text
     if strip_thinking:
         cleaned = re.sub(r"(?is)<think>.*?</think>", "", cleaned)
+        cleaned = re.sub(r"(?is)<\|channel>thought.*?<channel\|>", "", cleaned)
+        cleaned = re.sub(r"(?is)<\|channel\|>thought.*?<\|channel\|>", "", cleaned)
         cleaned = re.sub(r"(?i)</?think>", "", cleaned)
+    # Strip any leaked channel tokens or chat template delimiters
+    cleaned = re.sub(r"<\|?channel\|?>[a-zA-Z0-9_-]*", "", cleaned)
+    cleaned = re.sub(r"<channel\|?>", "", cleaned)
     cleaned = (
         cleaned.replace("</end_of_turn>", "")
+        .replace("<end_of_turn>", "")
         .replace("</start_of_turn>", "")
+        .replace("<start_of_turn>", "")
+        .replace("<bos>", "")
+        .replace("<eos>", "")
         .strip()
     )
     return cleaned
@@ -171,12 +180,13 @@ def _clean_response_text(text, strip_thinking=True):
 class StreamThoughtParser:
     """
     Parses a stream of text chunks to separate inline <think>...</think>
-    reasoning blocks from response text in real-time.
+    or channel-based reasoning blocks from response text in real-time.
     """
 
     def __init__(self):
         self.in_think_block = False
         self.pending_tag = ""
+        self._current_end_tag = None
 
     def process_chunk(self, chunk_text):
         """
@@ -191,18 +201,22 @@ class StreamThoughtParser:
 
         while text:
             if not self.in_think_block:
-                idx = text.lower().find("<think>")
-                if idx != -1:
+                m = re.search(r"(<think>|<\|channel\|?>thought)", text, re.IGNORECASE)
+                if m:
+                    idx = m.start()
                     before = text[:idx]
                     if before:
                         results.append((False, before))
                     self.in_think_block = True
-                    text = text[idx + 7:]
+                    matched_tag = m.group(1).lower()
+                    if "<think>" in matched_tag:
+                        self._current_end_tag = "</think>"
+                    else:
+                        self._current_end_tag = "<channel|>"
+                    text = text[m.end():]
                 else:
-                    match = re.search(
-                        r"<(?:t(?:h(?:i(?:n(?:k)?)?)?)?)?$", text, re.IGNORECASE
-                    )
-                    if match:
+                    match = re.search(r"(<[a-zA-Z0-9_|/-]*)$", text)
+                    if match and len(match.group(1)) <= 25:
                         before = text[:match.start()]
                         self.pending_tag = text[match.start():]
                         if before:
@@ -212,18 +226,23 @@ class StreamThoughtParser:
                         results.append((False, text))
                         break
             else:
-                idx = text.lower().find("</think>")
-                if idx != -1:
+                end_pattern = (
+                    r"(</think>|<\|?channel\|?>)"
+                    if not self._current_end_tag
+                    else (re.escape(self._current_end_tag) + r"|</think>|<\|?channel\|?>")
+                )
+                m = re.search(end_pattern, text, re.IGNORECASE)
+                if m:
+                    idx = m.start()
                     before = text[:idx]
                     if before:
                         results.append((True, before))
                     self.in_think_block = False
-                    text = text[idx + 8:]
+                    self._current_end_tag = None
+                    text = text[m.end():]
                 else:
-                    match = re.search(
-                        r"</(?:t(?:h(?:i(?:n(?:k)?)?)?)?)?$", text, re.IGNORECASE
-                    )
-                    if match:
+                    match = re.search(r"(<[a-zA-Z0-9_|/-]*)$", text)
+                    if match and len(match.group(1)) <= 25:
                         before = text[:match.start()]
                         self.pending_tag = text[match.start():]
                         if before:
@@ -279,18 +298,28 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
     endpoint = llama_cpp_config.get("endpoint")
     if endpoint:
         api_url = f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
-    elif base_url.rstrip("/").endswith("/completion"):
+    elif base_url.rstrip("/").endswith("/chat/completions") or base_url.rstrip("/").endswith("/completion"):
         api_url = base_url
+    elif base_url.rstrip("/").endswith("/v1"):
+        api_url = f"{base_url.rstrip('/')}/chat/completions"
     else:
-        api_url = f"{base_url.rstrip('/')}/completion"
+        api_url = f"{base_url.rstrip('/')}/v1/chat/completions"
+
+    is_chat_endpoint = "chat/completions" in api_url
 
     verbose_debug = config.get("debug_options", {}).get("verbose_debug", False)
     stream_llama_cpp = verbose_debug
 
-    payload = {
-        "prompt": prompt,
-        "stream": stream_llama_cpp,
-    }
+    if is_chat_endpoint:
+        payload = {
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": stream_llama_cpp,
+        }
+    else:
+        payload = {
+            "prompt": prompt,
+            "stream": stream_llama_cpp,
+        }
     if model_name:
         payload["model"] = model_name
 
@@ -337,10 +366,13 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
     token_counted = False
     try:
         tokenize_url = f"{base_url.rstrip('/')}/tokenize"
+        tok_payload = {"content": prompt}
+        if model_name:
+            tok_payload["model"] = model_name
         tok_res = requests.post(
             tokenize_url,
             headers={"Content-Type": "application/json"},
-            json={"content": prompt},
+            json=tok_payload,
             timeout=5,
         )
         if tok_res.status_code == 200:
@@ -445,7 +477,7 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                                 if "text" in choice:
                                     raw_content_part = choice.get("text", "")
                                 elif "delta" in choice and "content" in choice["delta"]:
-                                    raw_content_part = choice["delta"].get("content", "")
+                                    raw_content_part = choice["delta"].get("content") or ""
                             elif "response" in chunk:
                                 raw_content_part = chunk.get("response", "")
 
