@@ -30,17 +30,18 @@ api_settings:
   base_cache_dir: api_cache
   llama_cpp:
     base_url: http://localhost:11434
-    model: gemma4:26B
-    tokenizer_model: google/gemma-4-e2b-it
-    disable_reasoning: false
-    llm_options:
-      temperature: 0.8
-      n_predict: -1
     max_retries: 20
     retry_delay_seconds: 1
     request_timeout_seconds: 180
-    temperature: 0.8
-    context_window_size: 4096
+    # Model and generation parameters (configured directly in llama.cpp)
+    # model: gemma4:26B
+    # tokenizer_model: google/gemma-4-e2b-it
+    # temperature: 0.8
+    # context_window_size: 4096
+    # disable_reasoning: false
+    # llm_options:
+    #   temperature: 0.8
+    #   n_predict: -1
 repetition_check:
   enabled: true
   min_sentence_length_for_repetition_check: 10

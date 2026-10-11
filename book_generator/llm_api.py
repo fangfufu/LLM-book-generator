@@ -266,7 +266,8 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
     default_retry_delay = api_settings_conf.get("default_retry_delay_seconds", 5)
 
     base_url = llama_cpp_config.get("base_url", "http://localhost:8080")
-    model_name = llama_cpp_config.get("model", "llama-3")
+    model_name = llama_cpp_config.get("model", None)
+    model_display = model_name or "default"
     tokenizer_model_name = llama_cpp_config.get("tokenizer_model", None)
 
     max_retries = int(llama_cpp_config.get("max_retries", default_max_retries))
@@ -330,7 +331,7 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
             payload["chat_template_kwargs"]["enable_thinking"] = False
 
     if verbose_debug:
-        logging.info(f"llama.cpp API Prompt for model '{model_name}':\n{prompt}")
+        logging.info(f"llama.cpp API Prompt for model '{model_display}':\n{prompt}")
 
     # Attempt token counting: first via llama.cpp /tokenize endpoint, then fall back to AutoTokenizer
     token_counted = False
@@ -346,7 +347,7 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
             tok_data = tok_res.json()
             tokens = tok_data.get("tokens", [])
             logging.info(
-                f"llama.cpp server-side token count for prompt (model: '{model_name}'): {len(tokens)} tokens."
+                f"llama.cpp server-side token count for prompt (model: '{model_display}'): {len(tokens)} tokens."
             )
             token_counted = True
     except Exception as e_tok:
@@ -364,11 +365,11 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
             token_ids = tokenizer.encode(prompt)
             num_tokens = len(token_ids)
             logging.info(
-                f"llama.cpp client-side token count for prompt (tokenizer: '{tokenizer_model_name}', model: '{model_name}'): {num_tokens} tokens."
+                f"llama.cpp client-side token count for prompt (tokenizer: '{tokenizer_model_name}', model: '{model_display}'): {num_tokens} tokens."
             )
         except Exception as e_token_llamacpp:
             logging.error(
-                f"Could not count tokens for llama.cpp prompt using tokenizer '{tokenizer_model_name}' (model: '{model_name}'): {e_token_llamacpp}",
+                f"Could not count tokens for llama.cpp prompt using tokenizer '{tokenizer_model_name}' (model: '{model_display}'): {e_token_llamacpp}",
                 exc_info=True,
             )
 
@@ -384,13 +385,13 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
             response.raise_for_status()
 
             if stream_llama_cpp:
-                logging.info(f"Streaming llama.cpp response for model '{model_name}':")
+                logging.info(f"Streaming llama.cpp response for model '{model_display}':")
                 full_response_text_parts = []
                 full_reasoning_parts = []
                 thought_parser = StreamThoughtParser()
                 stream_section = None
                 repetition_check_config = config.get("repetition_check", {})
-                print(f"\n--- llama.cpp Stream ({model_name}) ---")
+                print(f"\n--- llama.cpp Stream ({model_display}) ---")
                 for line in response.iter_lines():
                     if line:
                         decoded_line = (
@@ -410,7 +411,7 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                             chunk = json.loads(json_str)
                             if "error" in chunk:
                                 logging.error(
-                                    f"llama.cpp API error during stream for model '{model_name}': {chunk['error']}"
+                                    f"llama.cpp API error during stream for model '{model_display}': {chunk['error']}"
                                 )
                                 print(f"\n--- End llama.cpp Stream (Error) ---")
                                 return None
@@ -493,7 +494,7 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
 
                                 print(f"\n--- End llama.cpp Stream (Done) ---")
                                 logging.info(
-                                    f"llama.cpp API stream completed for model '{model_name}'."
+                                    f"llama.cpp API stream completed for model '{model_display}'."
                                 )
                                 full_reasoning_text = "".join(full_reasoning_parts).strip()
                                 if full_reasoning_text:
@@ -535,7 +536,7 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                 response_data = response.json()
                 if "error" in response_data:
                     logging.error(
-                        f"llama.cpp API error for model '{model_name}': {response_data['error']}"
+                        f"llama.cpp API error for model '{model_display}': {response_data['error']}"
                     )
                     return None
 
@@ -577,28 +578,28 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
 
                 if reasoning_text:
                     logging.info(
-                        f"llama.cpp API reasoning process captured for model '{model_name}' ({len(reasoning_text)} chars)."
+                        f"llama.cpp API reasoning process captured for model '{model_display}' ({len(reasoning_text)} chars)."
                     )
                     logging.debug(f"Reasoning text:\n{reasoning_text}")
 
                 if response_text is not None:
                     logging.info(
-                        f"llama.cpp API call successful for model '{model_name}'."
+                        f"llama.cpp API call successful for model '{model_display}'."
                     )
                     return _clean_response_text(response_text, strip_thinking=True)
                 else:
                     logging.error(
-                        f"llama.cpp API response for model '{model_name}' did not contain expected content key. Attempt {attempt + 1}/{max_retries}. Data: {response_data}"
+                        f"llama.cpp API response for model '{model_display}' did not contain expected content key. Attempt {attempt + 1}/{max_retries}. Data: {response_data}"
                     )
 
         except requests.exceptions.HTTPError as e:
             logging.error(
-                f"llama.cpp API call (model '{model_name}') attempt {attempt + 1} failed with HTTPError: {e}. Status: {e.response.status_code if e.response is not None else 'unknown'}",
+                f"llama.cpp API call (model '{model_display}') attempt {attempt + 1} failed with HTTPError: {e}. Status: {e.response.status_code if e.response is not None else 'unknown'}",
                 exc_info=True,
             )
         except requests.exceptions.RequestException as e:
             logging.error(
-                f"llama.cpp API call (model '{model_name}') attempt {attempt + 1} failed: {e}",
+                f"llama.cpp API call (model '{model_display}') attempt {attempt + 1} failed: {e}",
                 exc_info=True,
             )
 
@@ -607,7 +608,7 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
             time.sleep(retry_delay)
         else:
             logging.error(
-                f"llama.cpp API call for model '{model_name}' failed after {max_retries} attempts."
+                f"llama.cpp API call for model '{model_display}' failed after {max_retries} attempts."
             )
             if api_settings_conf.get("terminate_on_api_failure", False):
                 logging.critical(

@@ -563,7 +563,7 @@ def run_generation_process():
 
     if api_provider in ("llama_cpp", "llama.cpp"):
         llama_cpp_conf = api_settings.get("llama_cpp", api_settings.get("llama.cpp", {}))
-        model_name_for_cache = llama_cpp_conf.get("model", "llama_cpp_default_model")
+        model_name_for_cache = llama_cpp_conf.get("model") or "llama_cpp_default_model"
     else:
         model_name_for_cache = "unknown_api_provider_model"
     sanitized_model_name = sanitize_filename(model_name_for_cache, 30)

@@ -1797,7 +1797,10 @@ def assemble_marketing_docx(
 
     model_name_used = ""
     if api_provider_local in ("llama_cpp", "llama.cpp"):
-        model_name_used = api_settings_local.get("llama_cpp", api_settings_local.get("llama.cpp", {})).get("model", "")
+        model_name_used = (
+            api_settings_local.get("llama_cpp", api_settings_local.get("llama.cpp", {})).get("model")
+            or "llama.cpp default"
+        )
     else:
         model_name_used = "[Unknown API Provider or Model]"
         logging.error(

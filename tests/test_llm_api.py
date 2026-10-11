@@ -354,6 +354,87 @@ class TestLlmApi(unittest.TestCase):
         result = _call_llama_cpp_api_internal("Generate", config)
         self.assertEqual(result, "Chapter text.")
 
+    @patch("requests.post")
+    def test_llama_cpp_no_model_custom_config_omits_overrides(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1]}
+
+        mock_completion_resp = MagicMock()
+        mock_completion_resp.status_code = 200
+        mock_completion_resp.json.return_value = {
+            "content": "Server default model response",
+            "stop": True,
+        }
+        mock_post.side_effect = [mock_tokenize_resp, mock_completion_resp]
+
+        # Only base_url and connection params provided, all model configs omitted
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                    "max_retries": 1,
+                    "retry_delay_seconds": 1,
+                    "request_timeout_seconds": 30,
+                },
+            },
+            "debug_options": {"verbose_debug": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Generate text", config)
+        self.assertEqual(result, "Server default model response")
+
+        completion_call = mock_post.call_args_list[1]
+        _, kwargs = completion_call
+        payload = kwargs["json"]
+
+        self.assertNotIn("model", payload)
+        self.assertNotIn("temperature", payload)
+        self.assertNotIn("n_ctx", payload)
+        self.assertNotIn("reasoning_budget", payload)
+        self.assertNotIn("chat_template_kwargs", payload)
+
+    @patch("requests.post")
+    def test_llama_cpp_model_custom_config_included_when_set(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1]}
+
+        mock_completion_resp = MagicMock()
+        mock_completion_resp.status_code = 200
+        mock_completion_resp.json.return_value = {
+            "content": "Custom model response",
+            "stop": True,
+        }
+        mock_post.side_effect = [mock_tokenize_resp, mock_completion_resp]
+
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                    "model": "my-custom-model",
+                    "temperature": 0.5,
+                    "context_window_size": 8192,
+                    "llm_options": {
+                        "n_predict": 512,
+                    },
+                },
+            },
+            "debug_options": {"verbose_debug": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Generate text", config)
+        self.assertEqual(result, "Custom model response")
+
+        completion_call = mock_post.call_args_list[1]
+        _, kwargs = completion_call
+        payload = kwargs["json"]
+
+        self.assertEqual(payload.get("model"), "my-custom-model")
+        self.assertEqual(payload.get("temperature"), 0.5)
+        self.assertEqual(payload.get("n_ctx"), 8192)
+        self.assertEqual(payload.get("n_predict"), 512)
+
 
 if __name__ == "__main__":
     unittest.main()
