@@ -1,4 +1,4 @@
-output_dir: generated_books
+output_dir: output/generated_books
 generation_params:
   author_name: Fufu Fang
   author_gender: male
@@ -24,8 +24,8 @@ api_settings:
   provider: llama_cpp
   default_max_retries: 10
   default_retry_delay_seconds: 30
-  base_cache_dir: api_cache
-  base_scratchpad_dir: scratchpad
+  base_cache_dir: output/api_cache
+  base_scratchpad_dir: output/scratchpad
   llama_cpp:
     base_url: http://localhost:11434
     max_retries: 20
@@ -56,4 +56,4 @@ style_params:
 debug_options:
   verbose_debug: true
   save_intermediate_html: true
-  log_output_path: logs/book.log
+  log_output_path: output/logs/book.log

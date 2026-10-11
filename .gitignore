@@ -190,10 +190,12 @@ venv.bak/
 .idea/
 .vscode/
 
-# Cache files (we'll likely add more specific cache paths later)
+# Cache and output files
 .cache/
 api_cache/
 scratchpad/
+logs/
+output/
 
 # Secrets
 .env
