@@ -2,17 +2,15 @@ output_dir: generated_books
 generation_params:
   author_name: Fufu Fang
   author_gender: male
-  main_topic: 'An action thriller on the counterintelligence operations against the
-    Reptilian operatives embedded in the British government
-    '
+  main_topic: >-
+    Counterintelligence operations against the Reptilian operatives embedded in the British establishment
   is_fiction: true
   fiction_chapter_count: 50
   generate_foreword: true
   generate_acknowledgements: true
   generate_appendix: true
   include_about_author_in_main_book: true
-  setting: 'Contemporary world
-    '
+  setting: 'Contemporary world '
   num_chapter_fallback: 3
   num_sections_per_chapter_fallback: 2
   book_title: ''
