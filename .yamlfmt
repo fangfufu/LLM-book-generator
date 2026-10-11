@@ -1,0 +1,5 @@
+formatter:
+  type: basic
+  tab_width: 2
+  pad_line_numbers: false
+  retain_line_breaks: true

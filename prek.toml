@@ -1,0 +1,135 @@
+# Configuration file for `prek`, a git hook framework written in Rust.
+# See https://prek.j178.dev for more information.
+#:schema https://www.schemastore.org/prek.json
+
+ci = {
+    skip = ["pytest", "pyright"],
+    autofix_commit_msg = """
+[pre-commit.ci] auto fixes from pre-commit.com hooks
+
+for more information, see https://pre-commit.ci
+""",
+    autofix_prs = true,
+    autoupdate_branch = "dev",
+    autoupdate_commit_msg = "[pre-commit.ci] pre-commit autoupdate",
+    autoupdate_schedule = "weekly"
+  }
+
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v6.0.0"
+hooks = [
+  { id = "check-added-large-files" },
+  { id = "check-case-conflict" },
+  { id = "check-merge-conflict" },
+  { id = "check-yaml" },
+  { id = "end-of-file-fixer" },
+  { id = "pretty-format-json", args = ["--autofix", "--indent=2", "--no-sort-keys"] },
+  { id = "trailing-whitespace" }
+]
+
+[[repos]]
+repo = "https://github.com/google/yamlfmt"
+rev = "v0.21.0"
+hooks = [
+  {
+    id = "yamlfmt",
+    exclude = "^tests/examples/save_states/"
+  }
+]
+
+[[repos]]
+repo = "https://github.com/astral-sh/ruff-pre-commit"
+rev = "v0.16.10"
+hooks = [
+  { id = "ruff-format" },
+  {
+    id = "ruff-check",
+    args = ["--fix"]
+  }
+]
+
+[[repos]]
+repo = "https://github.com/crate-ci/typos"
+rev = "v1.51.1"
+hooks = [
+  { id = "typos", exclude = "^CHANGELOG\\.md$" }
+]
+
+[[repos]]
+repo = "https://github.com/jendrikseipp/vulture"
+rev = "v2.16"
+hooks = [
+  { id = "vulture" }
+]
+
+[[repos]]
+repo = "https://github.com/pre-commit/mirrors-mypy"
+rev = "v2.4.0"
+hooks = [
+  {
+    id = "mypy",
+    args = [
+      "--strict",
+      "--ignore-missing-imports",
+      "--explicit-package-bases"
+    ],
+    additional_dependencies = [
+      "tokenize-rt",
+      "types-PyYAML"
+    ]
+  }
+]
+
+[[repos]]
+repo = "local"
+hooks = [
+  {
+    id = "pyright",
+    name = "pyright",
+    entry = "pyright",
+    language = "system",
+    pass_filenames = false
+  },
+  {
+    id = "pytest",
+    name = "pytest",
+    entry = "pytest",
+    language = "system",
+    pass_filenames = false
+  }
+]
+
+[[repos]]
+repo = "https://github.com/adrienverge/yamllint"
+rev = "v1.38.0"
+hooks = [
+  {
+    id = "yamllint",
+    args = ["-s"],
+    exclude = "^tests/examples/save_states/"
+  }
+]
+
+[[repos]]
+repo = "https://github.com/executablebooks/mdformat"
+rev = "1.0.0"
+hooks = [
+  {
+    id = "mdformat",
+    args = [
+      "--wrap",
+      "80",
+      "--number"
+    ],
+    exclude = '^(\.agents/rules/|CHANGELOG\.md$)',
+    additional_dependencies = [
+      "mdformat-gfm",
+      "mdformat-gfm-alerts",
+      "mdformat-footnote",
+      "mdformat-ruff",
+      "mdformat-config",
+      "mdformat-frontmatter"
+    ]
+  }
+]

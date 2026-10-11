@@ -1,0 +1,10 @@
+extends: relaxed
+ignore: |
+  config.yaml
+rules:
+  line-length:
+    max: 80
+    level: error
+    allow-non-breakable-words: false
+    allow-non-breakable-inline-mappings: false
+  new-lines: disable
