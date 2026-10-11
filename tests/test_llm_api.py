@@ -201,3 +201,160 @@ class TestLlmApi(unittest.TestCase):
     def test_llama_cpp_disable_reasoning_payload(self, mock_post):
         mock_tokenize_resp = MagicMock()
         mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1]}
+
+        mock_completion_resp = MagicMock()
+        mock_completion_resp.status_code = 200
+        mock_completion_resp.json.return_value = {
+            "content": "<think>Thinking about chapter</think>Final chapter content",
+            "stop": True,
+        }
+        mock_post.side_effect = [mock_tokenize_resp, mock_completion_resp]
+
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                    "model": "deepseek-r1",
+                    "disable_reasoning": True,
+                },
+            },
+            "debug_options": {"verbose_debug": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Write chapter", config)
+        self.assertEqual(result, "Final chapter content")
+
+        # Verify payload options
+        completion_call = mock_post.call_args_list[1]
+        _, kwargs = completion_call
+        self.assertEqual(kwargs["json"]["reasoning_budget"], 0)
+        self.assertEqual(kwargs["json"]["chat_template_kwargs"], {"enable_thinking": False})
+
+    @patch("requests.post")
+    def test_llama_cpp_streaming_disable_reasoning_strips_thinking_tags(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1]}
+
+        mock_stream_resp = MagicMock()
+        mock_stream_resp.status_code = 200
+        mock_stream_resp.iter_lines.return_value = [
+            b'data: {"content": "<think>Thinking"}',
+            b'data: {"content": " process...</think>Actual output", "stop": true}',
+        ]
+        mock_post.side_effect = [mock_tokenize_resp, mock_stream_resp]
+
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                    "disable_reasoning": True,
+                },
+            },
+            "debug_options": {"verbose_debug": True},
+            "repetition_check": {"enabled": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Generate", config)
+        self.assertEqual(result, "Actual output")
+
+
+    @patch("requests.post")
+    def test_llama_cpp_enabled_reasoning_strips_thinking_tags(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1]}
+
+        mock_completion_resp = MagicMock()
+        mock_completion_resp.status_code = 200
+        mock_completion_resp.json.return_value = {
+            "content": "<think>Complex reasoning about plot</think>Clean story output",
+            "stop": True,
+        }
+        mock_post.side_effect = [mock_tokenize_resp, mock_completion_resp]
+
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                    "model": "gemma4:26B",
+                    "disable_reasoning": False,
+                },
+            },
+            "debug_options": {"verbose_debug": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Write chapter", config)
+        self.assertEqual(result, "Clean story output")
+
+        # Verify payload does NOT inject reasoning_budget: 0 or enable_thinking: False
+        completion_call = mock_post.call_args_list[1]
+        _, kwargs = completion_call
+        self.assertNotIn("reasoning_budget", kwargs["json"])
+        self.assertNotIn("chat_template_kwargs", kwargs["json"])
+
+    @patch("requests.post")
+    def test_llama_cpp_streaming_reasoning_content_delta_handled(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1]}
+
+        mock_stream_resp = MagicMock()
+        mock_stream_resp.status_code = 200
+        mock_stream_resp.iter_lines.return_value = [
+            b'data: {"choices": [{"delta": {"reasoning_content": "Thinking step 1... "}}]}',
+            b'data: {"choices": [{"delta": {"reasoning_content": "Thinking step 2."}}]}',
+            b'data: {"choices": [{"delta": {"content": "Story chapter text."}}], "stop": true}',
+        ]
+        mock_post.side_effect = [mock_tokenize_resp, mock_stream_resp]
+
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                    "disable_reasoning": False,
+                },
+            },
+            "debug_options": {"verbose_debug": True},
+            "repetition_check": {"enabled": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Generate", config)
+        self.assertEqual(result, "Story chapter text.")
+
+    @patch("requests.post")
+    def test_llama_cpp_non_streaming_reasoning_content_handled(self, mock_post):
+        mock_tokenize_resp = MagicMock()
+        mock_tokenize_resp.status_code = 200
+        mock_tokenize_resp.json.return_value = {"tokens": [1]}
+
+        mock_completion_resp = MagicMock()
+        mock_completion_resp.status_code = 200
+        mock_completion_resp.json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": "<think>Internal thought</think>Chapter text.",
+                    "reasoning_content": "Model thought process here",
+                }
+            }]
+        }
+        mock_post.side_effect = [mock_tokenize_resp, mock_completion_resp]
+
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "base_url": "http://localhost:8080",
+                    "disable_reasoning": False,
+                },
+            },
+            "debug_options": {"verbose_debug": False},
+        }
+
+        result = _call_llama_cpp_api_internal("Generate", config)
+        self.assertEqual(result, "Chapter text.")
+
+
+if __name__ == "__main__":
+    unittest.main()
+

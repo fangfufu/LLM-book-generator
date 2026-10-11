@@ -10,6 +10,7 @@ The behavior of AI Book Weaver is primarily controlled by the `config.yaml` file
         *   `temperature`: Controls randomness (e.g., `0.8`).
         *   `tokenizer_model`: (Optional) For client-side token counting if server `/tokenize` is not used, e.g., `"NousResearch/Meta-Llama-3-8B-Instruct"`.
         *   `context_window_size`: (Optional) Context window size (`n_ctx`) for llama.cpp.
+        *   `disable_reasoning`: (Optional, boolean, default: `false`) When `false`, reasoning is enabled and processed by the backend (streaming thinking tokens and logging reasoning), while reasoning text (`<think>` blocks and reasoning deltas) is automatically stripped from the final generated response. When `true`, reasoning is explicitly suppressed.
         *   `llm_options`: (Optional) Additional parameters passed directly to llama.cpp (e.g. `n_predict`, `top_k`, `top_p`, `repeat_penalty`, `reasoning_budget`).
         *   `max_retries`, `retry_delay_seconds`: For API call resilience.
         *   `request_timeout_seconds`: Timeout for API requests in seconds.

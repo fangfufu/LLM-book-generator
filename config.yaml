@@ -32,6 +32,7 @@ api_settings:
     base_url: http://localhost:11434
     model: gemma4:26B
     tokenizer_model: google/gemma-4-e2b-it
+    disable_reasoning: false
     llm_options:
       temperature: 0.8
       n_predict: -1

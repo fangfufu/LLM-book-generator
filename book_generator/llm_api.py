@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 
 
 def _check_for_repetition(
@@ -142,6 +143,107 @@ def save_to_cache(prompt_text, response_text, cache_dir, cache_prefix=None):
 
 # --- LLM API Interaction ---
 
+def _clean_response_text(text, strip_thinking=True):
+    """
+    Cleans generated text by stripping leaked special tokens and optionally reasoning/thinking blocks.
+
+    Args:
+        text (str): The raw text from the LLM.
+        strip_thinking (bool): Whether to strip <think>...</think> blocks.
+
+    Returns:
+        str: Cleaned text.
+    """
+    if not text:
+        return text
+    cleaned = text
+    if strip_thinking:
+        cleaned = re.sub(r"(?is)<think>.*?</think>", "", cleaned)
+        cleaned = re.sub(r"(?i)</?think>", "", cleaned)
+    cleaned = (
+        cleaned.replace("</end_of_turn>", "")
+        .replace("</start_of_turn>", "")
+        .strip()
+    )
+    return cleaned
+
+
+class StreamThoughtParser:
+    """
+    Parses a stream of text chunks to separate inline <think>...</think>
+    reasoning blocks from response text in real-time.
+    """
+
+    def __init__(self):
+        self.in_think_block = False
+        self.pending_tag = ""
+
+    def process_chunk(self, chunk_text):
+        """
+        Takes raw text and yields tuples of (is_thinking: bool, text: str).
+        """
+        if not chunk_text:
+            return []
+
+        text = self.pending_tag + chunk_text
+        self.pending_tag = ""
+        results = []
+
+        while text:
+            if not self.in_think_block:
+                idx = text.lower().find("<think>")
+                if idx != -1:
+                    before = text[:idx]
+                    if before:
+                        results.append((False, before))
+                    self.in_think_block = True
+                    text = text[idx + 7:]
+                else:
+                    match = re.search(
+                        r"<(?:t(?:h(?:i(?:n(?:k)?)?)?)?)?$", text, re.IGNORECASE
+                    )
+                    if match:
+                        before = text[:match.start()]
+                        self.pending_tag = text[match.start():]
+                        if before:
+                            results.append((False, before))
+                        break
+                    else:
+                        results.append((False, text))
+                        break
+            else:
+                idx = text.lower().find("</think>")
+                if idx != -1:
+                    before = text[:idx]
+                    if before:
+                        results.append((True, before))
+                    self.in_think_block = False
+                    text = text[idx + 8:]
+                else:
+                    match = re.search(
+                        r"</(?:t(?:h(?:i(?:n(?:k)?)?)?)?)?$", text, re.IGNORECASE
+                    )
+                    if match:
+                        before = text[:match.start()]
+                        self.pending_tag = text[match.start():]
+                        if before:
+                            results.append((True, before))
+                        break
+                    else:
+                        results.append((True, text))
+                        break
+
+        return results
+
+    def finalize(self):
+        """Flushes any pending partial tag text."""
+        if self.pending_tag:
+            res = [(self.in_think_block, self.pending_tag)]
+            self.pending_tag = ""
+            return res
+        return []
+
+
 def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
     """
     Internal function to call the llama.cpp API.
@@ -215,6 +317,18 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                     f"Invalid 'context_window_size' value: {context_window_size}. It must be an integer. Ignoring."
                 )
 
+    disable_reasoning = bool(llama_cpp_config.get("disable_reasoning", False))
+    if disable_reasoning:
+        if "reasoning_budget" not in payload:
+            payload["reasoning_budget"] = 0
+        if "chat_template_kwargs" not in payload:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        elif (
+            isinstance(payload["chat_template_kwargs"], dict)
+            and "enable_thinking" not in payload["chat_template_kwargs"]
+        ):
+            payload["chat_template_kwargs"]["enable_thinking"] = False
+
     if verbose_debug:
         logging.info(f"llama.cpp API Prompt for model '{model_name}':\n{prompt}")
 
@@ -272,6 +386,9 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
             if stream_llama_cpp:
                 logging.info(f"Streaming llama.cpp response for model '{model_name}':")
                 full_response_text_parts = []
+                full_reasoning_parts = []
+                thought_parser = StreamThoughtParser()
+                stream_section = None
                 repetition_check_config = config.get("repetition_check", {})
                 print(f"\n--- llama.cpp Stream ({model_name}) ---")
                 for line in response.iter_lines():
@@ -298,35 +415,69 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                                 print(f"\n--- End llama.cpp Stream (Error) ---")
                                 return None
 
-                            response_part = ""
+                            # 1. Process separate reasoning fields (OpenAI reasoning_content or llama.cpp thinking)
+                            reasoning_part = ""
+                            if "thinking" in chunk:
+                                reasoning_part = chunk.get("thinking", "")
+                            elif "choices" in chunk and chunk["choices"]:
+                                choice = chunk["choices"][0]
+                                if "delta" in choice:
+                                    reasoning_part = (
+                                        choice["delta"].get("reasoning_content")
+                                        or choice["delta"].get("reasoning")
+                                        or ""
+                                    )
+
+                            if reasoning_part:
+                                full_reasoning_parts.append(reasoning_part)
+                                if stream_section != "thinking":
+                                    print("\n[Thinking] ", end="", flush=True)
+                                    stream_section = "thinking"
+                                print(reasoning_part, end="", flush=True)
+
+                            # 2. Process content chunks (which may contain inline <think> tags)
+                            raw_content_part = ""
                             if "content" in chunk:
-                                response_part = chunk.get("content", "")
+                                raw_content_part = chunk.get("content", "")
                             elif "choices" in chunk and chunk["choices"]:
                                 choice = chunk["choices"][0]
                                 if "text" in choice:
-                                    response_part = choice.get("text", "")
+                                    raw_content_part = choice.get("text", "")
                                 elif "delta" in choice and "content" in choice["delta"]:
-                                    response_part = choice["delta"].get("content", "")
+                                    raw_content_part = choice["delta"].get("content", "")
                             elif "response" in chunk:
-                                response_part = chunk.get("response", "")
+                                raw_content_part = chunk.get("response", "")
 
-                            print(response_part, end="", flush=True)
-                            full_response_text_parts.append(response_part)
+                            if raw_content_part:
+                                segments = thought_parser.process_chunk(raw_content_part)
+                                for is_thinking, segment in segments:
+                                    if is_thinking:
+                                        full_reasoning_parts.append(segment)
+                                        if stream_section != "thinking":
+                                            print("\n[Thinking] ", end="", flush=True)
+                                            stream_section = "thinking"
+                                        print(segment, end="", flush=True)
+                                    else:
+                                        full_response_text_parts.append(segment)
+                                        if stream_section != "response":
+                                            print("\n[Response] ", end="", flush=True)
+                                            stream_section = "response"
+                                        print(segment, end="", flush=True)
 
-                            # Perform repetition check if enabled
-                            if repetition_check_config.get("enabled", False):
-                                if _check_for_repetition(
-                                    response_part,
-                                    repetition_check_config,
-                                    full_response_text_parts,
-                                ):
-                                    logging.warning(
-                                        "Repetition detected. Terminating and retrying."
-                                    )
-                                    print(
-                                        "\n--- End llama.cpp Stream (Repetition Detected) ---"
-                                    )
-                                    return REPETITION_DETECTED
+                                        # Only check for repetition on response text, not internal thoughts
+                                        if repetition_check_config.get("enabled", False):
+                                            if _check_for_repetition(
+                                                segment,
+                                                repetition_check_config,
+                                                full_response_text_parts,
+                                            ):
+                                                logging.warning(
+                                                    "Repetition detected. Terminating and retrying."
+                                                )
+                                                print(
+                                                    "\n--- End llama.cpp Stream (Repetition Detected) ---"
+                                                )
+                                                return REPETITION_DETECTED
 
                             is_done = chunk.get("stop", False) or (
                                 "choices" in chunk
@@ -334,27 +485,49 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                                 and chunk["choices"][0].get("finish_reason") is not None
                             )
                             if is_done:
+                                for is_thinking, segment in thought_parser.finalize():
+                                    if is_thinking:
+                                        full_reasoning_parts.append(segment)
+                                    else:
+                                        full_response_text_parts.append(segment)
+
                                 print(f"\n--- End llama.cpp Stream (Done) ---")
                                 logging.info(
                                     f"llama.cpp API stream completed for model '{model_name}'."
                                 )
-                                final_text = "".join(full_response_text_parts).strip()
-                                return (
-                                    final_text.replace("</end_of_turn>", "")
-                                    .replace("</start_of_turn>", "")
-                                )
+                                full_reasoning_text = "".join(full_reasoning_parts).strip()
+                                if full_reasoning_text:
+                                    logging.info(
+                                        f"llama.cpp API reasoning process captured ({len(full_reasoning_text)} chars)."
+                                    )
+                                    logging.debug(f"Reasoning text:\n{full_reasoning_text}")
+
+                                final_text = "".join(full_response_text_parts)
+                                return _clean_response_text(final_text, strip_thinking=True)
                         except json.JSONDecodeError:
                             logging.error(
                                 f"Error decoding JSON chunk from llama.cpp stream: {decoded_line}"
                             )
                             print(f"\n--- End llama.cpp Stream (JSON Error) ---")
                             return None
+
+                for is_thinking, segment in thought_parser.finalize():
+                    if is_thinking:
+                        full_reasoning_parts.append(segment)
+                    else:
+                        full_response_text_parts.append(segment)
+
                 print(f"\n--- End llama.cpp Stream (Done) ---")
+                full_reasoning_text = "".join(full_reasoning_parts).strip()
+                if full_reasoning_text:
+                    logging.info(
+                        f"llama.cpp API reasoning process captured ({len(full_reasoning_text)} chars)."
+                    )
+                    logging.debug(f"Reasoning text:\n{full_reasoning_text}")
+
+                final_text = "".join(full_response_text_parts)
                 return (
-                    "".join(full_response_text_parts)
-                    .strip()
-                    .replace("</end_of_turn>", "")
-                    .replace("</start_of_turn>", "")
+                    _clean_response_text(final_text, strip_thinking=True)
                     if full_response_text_parts
                     else None
                 )
@@ -378,15 +551,41 @@ def _call_llama_cpp_api_internal(prompt, config, cache_prefix=None):
                 elif "response" in response_data:
                     response_text = response_data["response"]
 
+                reasoning_text = None
+                if "choices" in response_data and response_data["choices"]:
+                    choice = response_data["choices"][0]
+                    if "message" in choice:
+                        reasoning_text = (
+                            choice["message"].get("reasoning_content")
+                            or choice["message"].get("reasoning")
+                        )
+                elif "thinking" in response_data:
+                    reasoning_text = response_data.get("thinking")
+
+                if response_text:
+                    inline_thoughts = re.findall(
+                        r"(?is)<think>(.*?)</think>", response_text
+                    )
+                    if inline_thoughts:
+                        combined_inline = "\n".join(
+                            t.strip() for t in inline_thoughts if t.strip()
+                        )
+                        if reasoning_text:
+                            reasoning_text = f"{reasoning_text}\n{combined_inline}"
+                        else:
+                            reasoning_text = combined_inline
+
+                if reasoning_text:
+                    logging.info(
+                        f"llama.cpp API reasoning process captured for model '{model_name}' ({len(reasoning_text)} chars)."
+                    )
+                    logging.debug(f"Reasoning text:\n{reasoning_text}")
+
                 if response_text is not None:
                     logging.info(
                         f"llama.cpp API call successful for model '{model_name}'."
                     )
-                    return (
-                        response_text.strip()
-                        .replace("</end_of_turn>", "")
-                        .replace("</start_of_turn>", "")
-                    )
+                    return _clean_response_text(response_text, strip_thinking=True)
                 else:
                     logging.error(
                         f"llama.cpp API response for model '{model_name}' did not contain expected content key. Attempt {attempt + 1}/{max_retries}. Data: {response_data}"

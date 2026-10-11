@@ -158,6 +158,8 @@ class MainWindow(QMainWindow):
         self.widgets['api_settings']['llama_cpp']['context_window_size'] = QSpinBox()
         self.widgets['api_settings']['llama_cpp']['context_window_size'].setMaximum(999999)
         layout.addRow("Context Window:", self.widgets['api_settings']['llama_cpp']['context_window_size'])
+        self.widgets['api_settings']['llama_cpp']['disable_reasoning'] = QCheckBox()
+        layout.addRow("Disable Reasoning:", self.widgets['api_settings']['llama_cpp']['disable_reasoning'])
         return group
 
     def _create_style_tab(self):
@@ -315,7 +317,12 @@ class MainWindow(QMainWindow):
             if provider not in api_settings:
                 api_settings[provider] = {}
             for key, widget in self.widgets['api_settings'][provider].items():
-                api_settings[provider][key] = widget.text() if isinstance(widget, QLineEdit) else widget.value()
+                if isinstance(widget, QLineEdit):
+                    api_settings[provider][key] = widget.text()
+                elif isinstance(widget, QCheckBox):
+                    api_settings[provider][key] = widget.isChecked()
+                else:
+                    api_settings[provider][key] = widget.value()
 
         api_settings['base_cache_dir'] = self.widgets['api_settings']['base_cache_dir'].text()
         api_settings['default_max_retries'] = self.widgets['api_settings']['default_max_retries'].value()
